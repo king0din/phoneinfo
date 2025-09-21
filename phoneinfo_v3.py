@@ -7,13 +7,13 @@ from telebot.types import LabeledPrice, PreCheckoutQuery
 from datetime import datetime, timedelta
 
 TOKEN = "7734230126:AAFKPjIkAi4q_W6Uh1RAU6q9HiixKC5Ec8U"
-PROVIDER_TOKEN = ''  # Sağlayıcı tokeninizi buraya ekleyin
+PROVIDER_TOKEN = '' #sağlayıcı token
 bot = TeleBot(TOKEN)
 
-# Kullanıcı dillerini saklamak için bir sözlük
+# dil sözlüğü
 user_languages = {}
 
-# Dil mesajları (örnek veriler olmadan)
+# Dil mesajları
 messages = {
     'tr': {
         'welcome_select': "Lütfen botu kullanmak için bir dil seçin:",
@@ -244,20 +244,19 @@ messages = {
 }
 
 
-# Bot sahibinin kullanıcı ID'sini girin
-BOT_OWNER_ID = 1897795912  # Bot sahibinin Telegram kullanıcı ID'sini buraya ekleyin
+BOT_OWNER_ID = 1897795912 
 
 @bot.message_handler(commands=['prelist'])
 def send_premium_list(message):
-    # Komutun sadece bot sahibi tarafından çalıştırılmasını sağlıyoruz
+    
     if message.from_user.id == BOT_OWNER_ID:
         try:
-            # premium_users.txt dosyasını okuyarak listeyi oluşturuyoruz
+            # premium_users.txt dosyasını okuma ve listeleme
             with open("premium_users.txt", "r") as file:
                 premium_users = file.readlines()
 
             if premium_users:
-                # Kullanıcı ID'lerini temizleyip mesaj halinde birleştiriyoruz
+                # Kullanıcı ID'lerini temizleyip mesaj halinde birleştime işlemi
                 premium_list = ''.join(premium_users).strip()
                 bot.send_message(message.chat.id, f"Premium Üyeler Listesi:\n{premium_list}")
             else:
@@ -510,4 +509,5 @@ if __name__ == '__main__':
     main()
 
 bot.polling()
+
 
