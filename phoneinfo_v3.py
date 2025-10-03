@@ -6,7 +6,7 @@ from telebot import TeleBot, types
 from telebot.types import LabeledPrice, PreCheckoutQuery
 from datetime import datetime, timedelta
 
-TOKEN = "7734230126:AAFKPjIkAi4q_W6Uh1RAU6q9HiixKC5Ec8U"
+TOKEN = "BOT_TOKENİNİZİ_BURAYA"
 PROVIDER_TOKEN = '' #sağlayıcı token
 bot = TeleBot(TOKEN)
 
@@ -509,6 +509,7 @@ if __name__ == '__main__':
     main()
 
 bot.polling()
+
 
 
 
