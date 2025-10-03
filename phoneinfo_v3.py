@@ -273,7 +273,7 @@ def send_premium_list(message):
 def send_welcome(message):
     user_id = message.from_user.id
     if user_id not in user_languages:
-        user_languages[user_id] = 'en'  # Varsayılan dil İngilizce
+        user_languages[user_id] = 'en'  # Varsayılan dil İngilizce siz değiştirebilirsiniz
         language = 'en'
         welcome_text = messages[language]['welcome_select']
 
@@ -317,7 +317,7 @@ def buy_premium(call):
     # Ödeme bilgileri
     title = messages[language]['purchase_title']
     description = messages[language]['purchase_description']
-    price = 1  # Fiyat XTR cinsinden ayarlanabilir
+    price = 1  # Fiyat sadece XTR cinsinden ayarlanabilir
     prices = [LabeledPrice(label=title, amount=price * 1000)]  # 1 birim için 100 ekleyin
 
     bot.send_invoice(
@@ -509,5 +509,6 @@ if __name__ == '__main__':
     main()
 
 bot.polling()
+
 
 
