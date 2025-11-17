@@ -20,10 +20,10 @@ if not TOKEN:
 
 bot = TeleBot(TOKEN)
 
-# dil sözlüğü
+
 user_languages = {}
 
-# Dil mesajları
+
 messages = {
     'tr': {
         'welcome_select': "Lütfen botu kullanmak için bir dil seçin:",
@@ -537,4 +537,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
