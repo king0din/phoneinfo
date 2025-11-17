@@ -346,7 +346,7 @@ def update_bot(message):
             
             # Git çıktısını da ekle (kısaltılmış)
             git_output_lines = pull_result.stdout.split('\n')
-            important_lines = [line for line in git_output_lines if any(x in line for x in ['|', 'create', 'delete', 'Updating', 'Fast-forward']))]
+            important_lines = [line for line in git_output_lines if any(x in line for x in ['|', 'create', 'delete', 'Updating', 'Fast-forward'])]
             
             if important_lines:
                 update_message += f"\n🔧 **Git Çıktısı:**\n"
@@ -1136,4 +1136,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
