@@ -12,7 +12,6 @@ from dotenv import load_dotenv
 import random
 import hashlib
 import json
-import sqlite3
 from faker import Faker
 
 load_dotenv()
@@ -32,64 +31,112 @@ user_languages = {}
 user_consents = {}
 user_states = {}
 
-# Veritabanı başlatma
-def init_db():
-    conn = sqlite3.connect('phone_bot.db')
-    c = conn.cursor()
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS users
-                 (user_id INTEGER PRIMARY KEY, 
-                  language TEXT, 
-                  is_premium INTEGER DEFAULT 0,
-                  premium_until TEXT,
-                  join_date TEXT)''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS query_history
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  user_id INTEGER,
-                  phone_number TEXT,
-                  query_date TEXT,
-                  query_type TEXT)''')
-    
-    conn.commit()
-    conn.close()
-
-init_db()
-
-# Premium kullanıcı kontrolü
+# Premium kullanıcı kontrolü - SADECE TXT/JSON
 def is_premium_user(user_id):
-    conn = sqlite3.connect('phone_bot.db')
-    c = conn.cursor()
-    c.execute("SELECT premium_until FROM users WHERE user_id = ?", (user_id,))
-    result = c.fetchone()
-    conn.close()
+    user_id_str = str(user_id)
     
-    if result and result[0]:
-        try:
-            premium_until = datetime.fromisoformat(result[0])
-            return premium_until > datetime.now()
-        except:
-            return False
-    
-    # Eski premium_users.txt kontrolü
+    # 1. Önce premium_users.txt'yi kontrol et
     try:
         with open("premium_users.txt", "r") as file:
             premium_users = file.read().splitlines()
-            return str(user_id) in premium_users
+            if user_id_str in premium_users:
+                return True
     except:
-        return False
+        pass
+    
+    # 2. premium_users.json'ı kontrol et
+    try:
+        with open("premium_users.json", "r") as file:
+            premium_data = json.load(file)
+            if user_id_str in premium_data:
+                # Süre kontrolü yap
+                premium_until = datetime.fromisoformat(premium_data[user_id_str]['premium_until'])
+                return premium_until > datetime.now()
+    except:
+        pass
+    
+    return False
+
+# Premium kullanıcı ekleme
+def add_premium_user_to_files(user_id, days=30):
+    user_id_str = str(user_id)
+    premium_until = datetime.now() + timedelta(days=days)
+    
+    # 1. premium_users.txt'ye ekle
+    try:
+        with open("premium_users.txt", "r") as file:
+            existing_users = file.read().splitlines()
+    except:
+        existing_users = []
+    
+    if user_id_str not in existing_users:
+        with open("premium_users.txt", "a") as file:
+            file.write(f"{user_id_str}\n")
+    
+    # 2. premium_users.json'a ekle (detaylı bilgi için)
+    try:
+        with open("premium_users.json", "r") as file:
+            premium_data = json.load(file)
+    except:
+        premium_data = {}
+    
+    premium_data[user_id_str] = {
+        'added_date': datetime.now().isoformat(),
+        'premium_until': premium_until.isoformat(),
+        'days': days,
+        'added_by': 'admin'
+    }
+    
+    with open("premium_users.json", "w") as file:
+        json.dump(premium_data, file, indent=4)
+    
+    return premium_until
+
+# Premium kullanıcı kaldırma
+def remove_premium_user_from_files(user_id):
+    user_id_str = str(user_id)
+    
+    # 1. premium_users.txt'den kaldır
+    try:
+        with open("premium_users.txt", "r") as file:
+            lines = file.readlines()
+        with open("premium_users.txt", "w") as file:
+            for line in lines:
+                if line.strip() != user_id_str:
+                    file.write(line)
+    except:
+        pass
+    
+    # 2. premium_users.json'dan kaldır
+    try:
+        with open("premium_users.json", "r") as file:
+            premium_data = json.load(file)
+        
+        if user_id_str in premium_data:
+            del premium_data[user_id_str]
+            
+        with open("premium_users.json", "w") as file:
+            json.dump(premium_data, file, indent=4)
+    except:
+        pass
 
 # Sorgu geçmişi kaydetme
 def log_query(user_id, phone_number, query_type):
     try:
-        conn = sqlite3.connect('phone_bot.db')
-        c = conn.cursor()
-        c.execute("INSERT INTO query_history (user_id, phone_number, query_date, query_type) VALUES (?, ?, ?, ?)",
-                 (user_id, phone_number, datetime.now().isoformat(), query_type))
-        conn.commit()
-        conn.close()
+        with open("query_history.json", "r") as file:
+            history = json.load(file)
     except:
-        pass
+        history = []
+    
+    history.append({
+        'user_id': user_id,
+        'phone_number': phone_number,
+        'query_type': query_type,
+        'timestamp': datetime.now().isoformat()
+    })
+    
+    with open("query_history.json", "w") as file:
+        json.dump(history, file, indent=4)
 
 messages = {
     'tr': {
@@ -323,7 +370,7 @@ def update_bot(message):
             # Detaylı güncelleme mesajı oluştur
             update_message = f"✅ **{messages[language]['update_success']}**\n\n"
             update_message += f"📊 **{messages[language]['update_details']}:**\n"
-            update_message += f"```\n"
+            update_message += "```\n"
             update_message += f"📁 Dosya Değişiklikleri:\n"
             update_message += f"   ├ 📝 Değiştirilen: {changes['files_modified']} dosya\n"
             update_message += f"   ├ ➕ Eklenen: {changes['files_added']} dosya\n"
@@ -335,25 +382,28 @@ def update_bot(message):
                 update_message += f"\n📦 **{messages[language]['update_packages']}:**\n"
                 updated_packages = get_updated_packages()
                 if updated_packages:
-                    for pkg in updated_packages[:5]:  # İlk 5 paketi göster
+                    for pkg in updated_packages[:5]:
                         update_message += f"   ├ {pkg}\n"
                     if len(updated_packages) > 5:
                         update_message += f"   └ ... ve {len(updated_packages) - 5} paket daha\n"
                 else:
-                    update_message += f"   └ Tüm paketler güncel ✅\n"
+                    update_message += "   └ Tüm paketler güncel ✅\n"
             
-            update_message += f"```\n"
+            update_message += "```\n"
             
             # Git çıktısını da ekle (kısaltılmış)
             git_output_lines = pull_result.stdout.split('\n')
-            important_lines = [line for line in git_output_lines if any(x in line for x in ['|', 'create', 'delete', 'Updating', 'Fast-forward'])]
+            important_lines = []
+            for line in git_output_lines:
+                if any(x in line for x in ['|', 'create', 'delete', 'Updating', 'Fast-forward']):
+                    important_lines.append(line)
             
             if important_lines:
-                update_message += f"\n🔧 **Git Çıktısı:**\n"
-                update_message += f"```\n"
-                for line in important_lines[:10]:  # İlk 10 önemli satır
+                update_message += "\n🔧 **Git Çıktısı:**\n"
+                update_message += "```\n"
+                for line in important_lines[:10]:
                     update_message += f"{line}\n"
-                update_message += f"```\n"
+                update_message += "```\n"
             
             bot.reply_to(message, update_message, parse_mode="Markdown")
             
@@ -423,7 +473,7 @@ def install_requirements(message):
             
             if installed_packages:
                 success_msg += "📦 **Yüklenen Paketler:**\n"
-                for pkg in installed_packages[:10]:  # İlk 10 paketi göster
+                for pkg in installed_packages[:10]:
                     success_msg += f"   ├ {pkg}\n"
                 if len(installed_packages) > 10:
                     success_msg += f"   └ ... ve {len(installed_packages) - 10} paket daha\n"
@@ -437,7 +487,7 @@ def install_requirements(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Hata: {str(e)}")
 
-# SS7 Exploit Sınıfı (önceki koddan aynı)
+# SS7 Exploit Sınıfı
 class SS7Exploiter:
     def __init__(self):
         self.ss7_gateway = "simulated_gateway"
@@ -484,7 +534,7 @@ class SS7Exploiter:
             'balance': f"{random.randint(0, 100)} TL"
         }
 
-# Diğer sınıflar ve fonksiyonlar önceki koddan aynı şekilde devam eder...
+# GSM Ağ Bilgisi Sınıfı
 class GSMNetworkExploiter:
     def __init__(self):
         self.ss7 = SS7Exploiter()
@@ -509,6 +559,7 @@ class GSMNetworkExploiter:
             }
         }
 
+# Kişisel Veri Sınıfı
 class PersonalDataFetcher:
     def __init__(self):
         self.fake = Faker('tr_TR')
@@ -543,6 +594,7 @@ class PersonalDataFetcher:
         
         return profiles
 
+# Gelişmiş Sorgu Sistemi
 def enhanced_phone_query(phone_number, user_id):
     """Gelişmiş telefon sorgulama"""
     basic_info = get_phone_number_details(phone_number)
@@ -577,11 +629,43 @@ def enhanced_phone_query(phone_number, user_id):
         'query_id': hashlib.md5(f"{phone_number}{datetime.now()}".encode()).hexdigest()[:8].upper()
     }
 
-# Kalan fonksiyonlar önceki koddan aynı şekilde devam eder...
+# Yasal Uyarı Sistemi
 def send_legal_warning(chat_id, language):
     warning_text = {
-        'tr': """⚖️ <b>YASAL UYARI VE ONAY</b>...""",
-        'en': """⚖️ <b>LEGAL WARNING AND CONSENT</b>..."""
+        'tr': """
+⚖️ <b>YASAL UYARI VE ONAY</b>
+
+🔴 <b>BU BOTUN KULLANIMI İLE İLGİLİ ÖNEMLİ UYARILAR:</b>
+
+• Bu bot gelişmiş kişisel verilere erişim sağlamaktadır
+• 6698 sayılı KVKK'ya göre kişisel verileri izinsiz işlemek SUÇTUR
+• Tüm sorumluluk kullanıcıya aittir
+• Yasa dışı kullanımda cezai yaptırımlar uygulanır
+
+✅ Devam etmek için aşağıdaki butona basarak:
+• Tüm sorumluluğu kabul ettiğinizi
+• Yasalara aykırı kullanımdan doğacak tüm sonuçlardan kendinizin sorumlu olduğunuzu
+• 18 yaşından büyük olduğunuzu beyan edersiniz
+
+👇 <b>Onaylamak için butona basın:</b>
+""",
+        'en': """
+⚖️ <b>LEGAL WARNING AND CONSENT</b>
+
+🔴 <b>IMPORTANT WARNINGS ABOUT USING THIS BOT:</b>
+
+• This bot provides access to advanced personal data
+• Processing personal data without permission is a CRIME
+• All responsibility belongs to the user
+• Criminal sanctions apply for illegal use
+
+✅ By clicking the button below you confirm:
+• You accept all responsibility
+• You are responsible for all consequences of illegal use
+• You declare that you are over 18 years old
+
+👇 <b>Click the button to confirm:</b>
+"""
     }
     
     markup = types.InlineKeyboardMarkup()
@@ -593,7 +677,167 @@ def send_legal_warning(chat_id, language):
 def get_user_consent(user_id):
     return user_id in user_consents
 
-# Diğer handler'lar ve fonksiyonlar önceki koddan aynı...
+# Admin Premium Komutları
+@bot.message_handler(commands=['pre'])
+def add_premium_user(message):
+    if message.from_user.id != BOT_OWNER_ID:
+        bot.reply_to(message, "⛔ Bu komutu sadece bot sahibi kullanabilir.")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) < 2:
+            bot.reply_to(message, "❌ Kullanım: /pre <user_id> [gün_sayısı]\nÖrnek: /pre 123456789 30")
+            return
+        
+        user_id = int(parts[1])
+        days = 30
+        if len(parts) >= 3:
+            days = int(parts[2])
+        
+        premium_until = add_premium_user_to_files(user_id, days)
+        
+        # Kullanıcıya bildirim
+        try:
+            bot.send_message(user_id, f"🎉 **Tebrikler! Premium üyeliğiniz aktif edildi!**\n\n"
+                                    f"⭐ **Premium Süresi:** {days} gün\n"
+                                    f"📅 **Bitiş Tarihi:** {premium_until.strftime('%d/%m/%Y %H:%M')}\n\n"
+                                    f"Artık tüm premium özelliklere erişebilirsiniz!")
+        except:
+            pass
+        
+        bot.reply_to(message, f"✅ **Premium üyelik başarıyla eklendi!**\n\n"
+                            f"👤 **Kullanıcı ID:** {user_id}\n"
+                            f"⭐ **Süre:** {days} gün\n"
+                            f"📅 **Bitiş:** {premium_until.strftime('%d/%m/%Y %H:%M')}\n"
+                            f"💾 **Kayıt:** TXT + JSON")
+        
+    except ValueError:
+        bot.reply_to(message, "❌ Geçersiz user_id veya gün sayısı.")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Hata: {str(e)}")
+
+@bot.message_handler(commands=['unpre'])
+def remove_premium_user(message):
+    if message.from_user.id != BOT_OWNER_ID:
+        bot.reply_to(message, "⛔ Bu komutu sadece bot sahibi kullanabilir.")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) < 2:
+            bot.reply_to(message, "❌ Kullanım: /unpre <user_id>\nÖrnek: /unpre 123456789")
+            return
+        
+        user_id = int(parts[1])
+        remove_premium_user_from_files(user_id)
+        
+        try:
+            bot.send_message(user_id, "❌ **Premium üyeliğiniz sonlandırıldı!**\n\n"
+                                    "Premium özelliklere erişiminiz kaldırıldı.")
+        except:
+            pass
+        
+        bot.reply_to(message, f"✅ **Premium üyelik kaldırıldı!**\n\n"
+                            f"👤 **Kullanıcı ID:** {user_id}\n"
+                            f"💾 **Kayıt:** TXT + JSON silindi")
+        
+    except ValueError:
+        bot.reply_to(message, "❌ Geçersiz user_id.")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Hata: {str(e)}")
+
+@bot.message_handler(commands=['preinfo'])
+def get_premium_info(message):
+    if message.from_user.id != BOT_OWNER_ID:
+        bot.reply_to(message, "⛔ Bu komutu sadece bot sahibi kullanabilir.")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) < 2:
+            bot.reply_to(message, "❌ Kullanım: /preinfo <user_id>\nÖrnek: /preinfo 123456789")
+            return
+        
+        user_id = int(parts[1])
+        user_id_str = str(user_id)
+        
+        # JSON'dan bilgileri al
+        try:
+            with open("premium_users.json", "r") as file:
+                premium_data = json.load(file)
+            
+            if user_id_str in premium_data:
+                user_data = premium_data[user_id_str]
+                premium_until = datetime.fromisoformat(user_data['premium_until'])
+                now = datetime.now()
+                remaining_days = (premium_until - now).days
+                
+                status = "✅ AKTİF" if remaining_days > 0 else "❌ SÜRESİ DOLMUŞ"
+                
+                info_text = f"👤 **Premium Kullanıcı Bilgisi**\n\n"
+                info_text += f"🆔 **User ID:** {user_id}\n"
+                info_text += f"📅 **Eklenme Tarihi:** {datetime.fromisoformat(user_data['added_date']).strftime('%d/%m/%Y %H:%M')}\n"
+                info_text += f"⭐ **Premium Durumu:** {status}\n"
+                info_text += f"⏰ **Bitiş Tarihi:** {premium_until.strftime('%d/%m/%Y %H:%M')}\n"
+                info_text += f"📊 **Kalan Gün:** {remaining_days} gün\n"
+                info_text += f"🔧 **Ekleyen:** {user_data.get('added_by', 'admin')}\n"
+                info_text += f"💾 **Kaynak:** JSON"
+                
+                bot.reply_to(message, info_text, parse_mode="Markdown")
+            else:
+                bot.reply_to(message, f"❌ **Kullanıcı premium değil:** {user_id}")
+                
+        except:
+            bot.reply_to(message, f"❌ **Kullanıcı bulunamadı:** {user_id}")
+            
+    except ValueError:
+        bot.reply_to(message, "❌ Geçersiz user_id.")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Hata: {str(e)}")
+
+@bot.message_handler(commands=['prelist'])
+def send_premium_list(message):
+    if message.from_user.id != BOT_OWNER_ID:
+        bot.reply_to(message, "⛔ Bu komutu sadece bot sahibi kullanabilir.")
+        return
+    
+    try:
+        # TXT dosyasından listeyi al
+        with open("premium_users.txt", "r") as file:
+            premium_users = file.read().splitlines()
+        
+        # JSON'dan detaylı bilgileri al
+        try:
+            with open("premium_users.json", "r") as file:
+                premium_data = json.load(file)
+        except:
+            premium_data = {}
+        
+        if premium_users:
+            list_text = "📋 **Premium Üyeler Listesi**\n\n"
+            
+            for user_id in premium_users[:20]:
+                if user_id in premium_data:
+                    user_data = premium_data[user_id]
+                    premium_until = datetime.fromisoformat(user_data['premium_until'])
+                    remaining_days = (premium_until - datetime.now()).days
+                    status = "✅" if remaining_days > 0 else "❌"
+                    list_text += f"{status} {user_id} - {remaining_days}gün kalan\n"
+                else:
+                    list_text += f"⚠️ {user_id} - Sadece TXT'de\n"
+            
+            if len(premium_users) > 20:
+                list_text += f"\n... ve {len(premium_users) - 20} kullanıcı daha"
+            
+            bot.reply_to(message, list_text, parse_mode="Markdown")
+        else:
+            bot.reply_to(message, "ℹ️ Henüz premium üye yok.")
+            
+    except Exception as e:
+        bot.reply_to(message, f"❌ Hata: {str(e)}")
+
+# Ana Bot Fonksiyonları
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_id = message.from_user.id
@@ -634,7 +878,7 @@ def show_main_menu(chat_id, language):
     
     bot.send_message(chat_id, welcome_text, reply_markup=markup, parse_mode="HTML")
 
-# Diğer callback handler'lar önceki koddan aynı...
+# Callback Handler'lar
 @bot.callback_query_handler(func=lambda call: call.data.startswith("lang_"))
 def select_language(call):
     user_id = call.from_user.id
@@ -685,7 +929,16 @@ def handle_ss7_exploit(call):
     markup.add(types.InlineKeyboardButton(messages[language]['ss7_confirm'], callback_data="confirm_ss7"))
     markup.add(types.InlineKeyboardButton(messages[language]['ss7_cancel'], callback_data="cancel_ss7"))
     
-    warning_text = f"""🔴 <b>{messages[language]['ss7_warning']}</b>..."""
+    warning_text = f"""
+🔴 <b>{messages[language]['ss7_warning']}</b>
+
+⚠️ <b>BU ÖZELLİK İLE:</b>
+• GSM ağ altyapısına erişim sağlanır
+• IMSI ve konum bilgileri çekilir
+• Abone verilerine erişilir
+
+✅ Devam etmek için onay verin:
+"""
     
     bot.edit_message_text(
         warning_text,
@@ -734,7 +987,39 @@ def handle_ss7_number(message):
     gsm_exploiter = GSMNetworkExploiter()
     network_data = gsm_exploiter.get_network_data(phone_number)
     
-    report_text = f"""🛰️ <b>SS7 EXPLOIT RAPORU</b>..."""
+    report_text = f"""
+🛰️ <b>SS7 EXPLOIT RAPORU</b>
+
+📞 <b>Hedef Numara:</b> {phone_number}
+⏰ <b>Sorgu Zamanı:</b> {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
+
+🔍 <b>IMSI Bilgileri:</b>
+├ IMSI: {network_data['imsi_info']['imsi']}
+├ Ülke Kodu: {network_data['imsi_info']['country_code']}
+├ Ağ Kodu: {network_data['imsi_info']['network_code']}
+└ Abone ID: {network_data['imsi_info']['subscriber_id']}
+
+📍 <b>Konum Bilgisi:</b>
+├ Enlem: {network_data['location_info']['coordinates']['latitude']}
+├ Boylam: {network_data['location_info']['coordinates']['longitude']}
+├ Doğruluk: {network_data['location_info']['coordinates']['range']}m
+├ LAC: {network_data['location_info']['cell_location']['lac']}
+└ Cell ID: {network_data['location_info']['cell_location']['cell_id']}
+
+📡 <b>Ağ Bilgisi:</b>
+├ Operatör: {network_data['network_info']['operator']}
+├ MCC: {network_data['network_info']['mcc']}
+├ MNC: {network_data['network_info']['mnc']}
+└ Teknoloji: {network_data['network_info']['technology']}
+
+👤 <b>Abone Bilgisi:</b>
+├ Durum: {network_data['subscriber_info']['status']}
+├ Hat Türü: {network_data['subscriber_info']['line_type']}
+├ Aktivasyon: {network_data['subscriber_info']['activation_date']}
+└ Bakiye: {network_data['subscriber_info']['balance']}
+
+⚠️ <i>Bu veriler simülasyon amaçlıdır.</i>
+"""
     
     bot.send_message(message.chat.id, report_text, parse_mode="HTML")
     user_states[user_id] = None
@@ -845,25 +1130,15 @@ def checkout_handler(pre_checkout_query: PreCheckoutQuery):
 def successful_payment_handler(message):
     user_id = message.from_user.id
     language = user_languages.get(user_id, 'en')
-    success_message = messages[language]['successful_payment']
-
-    with open("premium_users.txt", "a") as file:
-        file.write(f"{user_id}\n")
     
-    try:
-        conn = sqlite3.connect('phone_bot.db')
-        c = conn.cursor()
-        premium_until = (datetime.now() + timedelta(days=30)).isoformat()
-        c.execute('''INSERT OR REPLACE INTO users 
-                    (user_id, language, is_premium, premium_until, join_date) 
-                    VALUES (?, ?, ?, ?, ?)''',
-                 (user_id, language, 1, premium_until, datetime.now().isoformat()))
-        conn.commit()
-        conn.close()
-    except:
-        pass
-
-    bot.send_message(user_id, success_message)
+    # Sadece dosyalara kaydet
+    premium_until = add_premium_user_to_files(user_id, 30)
+    
+    success_message = f"✅ {messages[language]['successful_payment']}\n"
+    success_message += f"⭐ **Premium Süresi:** 30 gün\n"
+    success_message += f"📅 **Bitiş Tarihi:** {premium_until.strftime('%d/%m/%Y %H:%M')}"
+    
+    bot.send_message(user_id, success_message, parse_mode="Markdown")
 
 @bot.callback_query_handler(func=lambda call: call.data == "settings")
 def settings(call):
@@ -924,177 +1199,6 @@ def get_phone_number_details(number):
     except NumberParseException:
         return None
 
-@bot.message_handler(commands=['prelist'])
-def send_premium_list(message):
-    if message.from_user.id == BOT_OWNER_ID:
-        try:
-            with open("premium_users.txt", "r") as file:
-                premium_users = file.readlines()
-
-            if premium_users:
-                premium_list = ''.join(premium_users).strip()
-                bot.send_message(message.chat.id, f"Premium Üyeler Listesi:\n{premium_list}")
-            else:
-                bot.send_message(message.chat.id, "Henüz premium üyeler yok.")
-
-        except FileNotFoundError:
-            bot.send_message(message.chat.id, "Premium üyeler listesi bulunamadı.")
-    else:
-        bot.send_message(message.chat.id, "Bu komutu sadece bot sahibi kullanabilir.")
-
-
-
-@bot.message_handler(commands=['pre'])
-def add_premium_user(message):
-    if message.from_user.id != BOT_OWNER_ID:
-        bot.reply_to(message, "⛔ Bu komutu sadece bot sahibi kullanabilir.")
-        return
-    
-    try:
-        # Komut formatı: /pre <user_id> [gün_sayısı]
-        parts = message.text.split()
-        if len(parts) < 2:
-            bot.reply_to(message, "❌ Kullanım: /pre <user_id> [gün_sayısı]\nÖrnek: /pre 123456789 30")
-            return
-        
-        user_id = int(parts[1])
-        days = 30  # Varsayılan 30 gün
-        if len(parts) >= 3:
-            days = int(parts[2])
-        
-        # Premium süresini hesapla
-        premium_until = datetime.now() + timedelta(days=days)
-        
-        # Veritabanına ekle
-        conn = sqlite3.connect('phone_bot.db')
-        c = conn.cursor()
-        c.execute('''INSERT OR REPLACE INTO users 
-                    (user_id, language, is_premium, premium_until, join_date) 
-                    VALUES (?, ?, ?, ?, ?)''',
-                 (user_id, 'tr', 1, premium_until.isoformat(), datetime.now().isoformat()))
-        conn.commit()
-        conn.close()
-        
-        # premium_users.txt'ye ekle
-        with open("premium_users.txt", "a") as file:
-            file.write(f"{user_id}\n")
-        
-        # Kullanıcıya bildirim gönder (eğer mümkünse)
-        try:
-            bot.send_message(user_id, f"🎉 **Tebrikler! Premium üyeliğiniz aktif edildi!**\n\n"
-                                    f"⭐ **Premium Süresi:** {days} gün\n"
-                                    f"📅 **Bitiş Tarihi:** {premium_until.strftime('%d/%m/%Y %H:%M')}\n\n"
-                                    f"Artık tüm premium özelliklere erişebilirsiniz!")
-        except:
-            pass  # Kullanıcı botu başlatmamış olabilir
-        
-        bot.reply_to(message, f"✅ **Premium üyelik başarıyla eklendi!**\n\n"
-                            f"👤 **Kullanıcı ID:** {user_id}\n"
-                            f"⭐ **Süre:** {days} gün\n"
-                            f"📅 **Bitiş:** {premium_until.strftime('%d/%m/%Y %H:%M')}")
-        
-    except ValueError:
-        bot.reply_to(message, "❌ Geçersiz user_id veya gün sayısı. Lütfen sayısal değer girin.")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Hata oluştu: {str(e)}")
-
-@bot.message_handler(commands=['unpre'])
-def remove_premium_user(message):
-    if message.from_user.id != BOT_OWNER_ID:
-        bot.reply_to(message, "⛔ Bu komutu sadece bot sahibi kullanabilir.")
-        return
-    
-    try:
-        parts = message.text.split()
-        if len(parts) < 2:
-            bot.reply_to(message, "❌ Kullanım: /unpre <user_id>\nÖrnek: /unpre 123456789")
-            return
-        
-        user_id = int(parts[1])
-        
-        # Veritabanından kaldır
-        conn = sqlite3.connect('phone_bot.db')
-        c = conn.cursor()
-        c.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
-        conn.commit()
-        conn.close()
-        
-        # premium_users.txt'den kaldır
-        try:
-            with open("premium_users.txt", "r") as file:
-                lines = file.readlines()
-            with open("premium_users.txt", "w") as file:
-                for line in lines:
-                    if line.strip() != str(user_id):
-                        file.write(line)
-        except:
-            pass
-        
-        # Kullanıcıya bildirim gönder (eğer mümkünse)
-        try:
-            bot.send_message(user_id, "❌ **Premium üyeliğiniz sonlandırıldı!**\n\n"
-                                    "Premium özelliklere erişiminiz kaldırıldı.")
-        except:
-            pass
-        
-        bot.reply_to(message, f"✅ **Premium üyelik başarıyla kaldırıldı!**\n\n"
-                            f"👤 **Kullanıcı ID:** {user_id}")
-        
-    except ValueError:
-        bot.reply_to(message, "❌ Geçersiz user_id. Lütfen sayısal değer girin.")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Hata oluştu: {str(e)}")
-
-@bot.message_handler(commands=['preinfo'])
-def get_premium_info(message):
-    if message.from_user.id != BOT_OWNER_ID:
-        bot.reply_to(message, "⛔ Bu komutu sadece bot sahibi kullanabilir.")
-        return
-    
-    try:
-        parts = message.text.split()
-        if len(parts) < 2:
-            bot.reply_to(message, "❌ Kullanım: /preinfo <user_id>\nÖrnek: /preinfo 123456789")
-            return
-        
-        user_id = int(parts[1])
-        
-        # Veritabanından bilgileri al
-        conn = sqlite3.connect('phone_bot.db')
-        c = conn.cursor()
-        c.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-        user_data = c.fetchone()
-        conn.close()
-        
-        if user_data:
-            user_id, language, is_premium, premium_until, join_date = user_data
-            
-            if is_premium and premium_until:
-                premium_until_dt = datetime.fromisoformat(premium_until)
-                now = datetime.now()
-                remaining_days = (premium_until_dt - now).days
-                
-                status = "✅ AKTİF" if remaining_days > 0 else "❌ SÜRESİ DOLMUŞ"
-                
-                info_text = f"👤 **Premium Kullanıcı Bilgisi**\n\n"
-                info_text += f"🆔 **User ID:** {user_id}\n"
-                info_text += f"🌐 **Dil:** {language}\n"
-                info_text += f"📅 **Katılma Tarihi:** {datetime.fromisoformat(join_date).strftime('%d/%m/%Y %H:%M')}\n"
-                info_text += f"⭐ **Premium Durumu:** {status}\n"
-                info_text += f"⏰ **Bitiş Tarihi:** {premium_until_dt.strftime('%d/%m/%Y %H:%M')}\n"
-                info_text += f"📊 **Kalan Gün:** {remaining_days} gün\n"
-                
-                bot.reply_to(message, info_text, parse_mode="Markdown")
-            else:
-                bot.reply_to(message, f"❌ **Kullanıcı premium değil:** {user_id}")
-        else:
-            bot.reply_to(message, f"❌ **Kullanıcı bulunamadı:** {user_id}")
-            
-    except ValueError:
-        bot.reply_to(message, "❌ Geçersiz user_id. Lütfen sayısal değer girin.")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Hata oluştu: {str(e)}")
-
 # Logo ve başlatma
 logo2 = '''
 88  dP 88 88b 88  dP""b8      dP"Yb  8888b.  88 88b 88
@@ -1136,5 +1240,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
