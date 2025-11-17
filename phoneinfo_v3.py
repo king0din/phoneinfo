@@ -942,6 +942,159 @@ def send_premium_list(message):
     else:
         bot.send_message(message.chat.id, "Bu komutu sadece bot sahibi kullanabilir.")
 
+
+
+@bot.message_handler(commands=['pre'])
+def add_premium_user(message):
+    if message.from_user.id != BOT_OWNER_ID:
+        bot.reply_to(message, "⛔ Bu komutu sadece bot sahibi kullanabilir.")
+        return
+    
+    try:
+        # Komut formatı: /pre <user_id> [gün_sayısı]
+        parts = message.text.split()
+        if len(parts) < 2:
+            bot.reply_to(message, "❌ Kullanım: /pre <user_id> [gün_sayısı]\nÖrnek: /pre 123456789 30")
+            return
+        
+        user_id = int(parts[1])
+        days = 30  # Varsayılan 30 gün
+        if len(parts) >= 3:
+            days = int(parts[2])
+        
+        # Premium süresini hesapla
+        premium_until = datetime.now() + timedelta(days=days)
+        
+        # Veritabanına ekle
+        conn = sqlite3.connect('phone_bot.db')
+        c = conn.cursor()
+        c.execute('''INSERT OR REPLACE INTO users 
+                    (user_id, language, is_premium, premium_until, join_date) 
+                    VALUES (?, ?, ?, ?, ?)''',
+                 (user_id, 'tr', 1, premium_until.isoformat(), datetime.now().isoformat()))
+        conn.commit()
+        conn.close()
+        
+        # premium_users.txt'ye ekle
+        with open("premium_users.txt", "a") as file:
+            file.write(f"{user_id}\n")
+        
+        # Kullanıcıya bildirim gönder (eğer mümkünse)
+        try:
+            bot.send_message(user_id, f"🎉 **Tebrikler! Premium üyeliğiniz aktif edildi!**\n\n"
+                                    f"⭐ **Premium Süresi:** {days} gün\n"
+                                    f"📅 **Bitiş Tarihi:** {premium_until.strftime('%d/%m/%Y %H:%M')}\n\n"
+                                    f"Artık tüm premium özelliklere erişebilirsiniz!")
+        except:
+            pass  # Kullanıcı botu başlatmamış olabilir
+        
+        bot.reply_to(message, f"✅ **Premium üyelik başarıyla eklendi!**\n\n"
+                            f"👤 **Kullanıcı ID:** {user_id}\n"
+                            f"⭐ **Süre:** {days} gün\n"
+                            f"📅 **Bitiş:** {premium_until.strftime('%d/%m/%Y %H:%M')}")
+        
+    except ValueError:
+        bot.reply_to(message, "❌ Geçersiz user_id veya gün sayısı. Lütfen sayısal değer girin.")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Hata oluştu: {str(e)}")
+
+@bot.message_handler(commands=['unpre'])
+def remove_premium_user(message):
+    if message.from_user.id != BOT_OWNER_ID:
+        bot.reply_to(message, "⛔ Bu komutu sadece bot sahibi kullanabilir.")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) < 2:
+            bot.reply_to(message, "❌ Kullanım: /unpre <user_id>\nÖrnek: /unpre 123456789")
+            return
+        
+        user_id = int(parts[1])
+        
+        # Veritabanından kaldır
+        conn = sqlite3.connect('phone_bot.db')
+        c = conn.cursor()
+        c.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+        conn.commit()
+        conn.close()
+        
+        # premium_users.txt'den kaldır
+        try:
+            with open("premium_users.txt", "r") as file:
+                lines = file.readlines()
+            with open("premium_users.txt", "w") as file:
+                for line in lines:
+                    if line.strip() != str(user_id):
+                        file.write(line)
+        except:
+            pass
+        
+        # Kullanıcıya bildirim gönder (eğer mümkünse)
+        try:
+            bot.send_message(user_id, "❌ **Premium üyeliğiniz sonlandırıldı!**\n\n"
+                                    "Premium özelliklere erişiminiz kaldırıldı.")
+        except:
+            pass
+        
+        bot.reply_to(message, f"✅ **Premium üyelik başarıyla kaldırıldı!**\n\n"
+                            f"👤 **Kullanıcı ID:** {user_id}")
+        
+    except ValueError:
+        bot.reply_to(message, "❌ Geçersiz user_id. Lütfen sayısal değer girin.")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Hata oluştu: {str(e)}")
+
+@bot.message_handler(commands=['preinfo'])
+def get_premium_info(message):
+    if message.from_user.id != BOT_OWNER_ID:
+        bot.reply_to(message, "⛔ Bu komutu sadece bot sahibi kullanabilir.")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) < 2:
+            bot.reply_to(message, "❌ Kullanım: /preinfo <user_id>\nÖrnek: /preinfo 123456789")
+            return
+        
+        user_id = int(parts[1])
+        
+        # Veritabanından bilgileri al
+        conn = sqlite3.connect('phone_bot.db')
+        c = conn.cursor()
+        c.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        user_data = c.fetchone()
+        conn.close()
+        
+        if user_data:
+            user_id, language, is_premium, premium_until, join_date = user_data
+            
+            if is_premium and premium_until:
+                premium_until_dt = datetime.fromisoformat(premium_until)
+                now = datetime.now()
+                remaining_days = (premium_until_dt - now).days
+                
+                status = "✅ AKTİF" if remaining_days > 0 else "❌ SÜRESİ DOLMUŞ"
+                
+                info_text = f"👤 **Premium Kullanıcı Bilgisi**\n\n"
+                info_text += f"🆔 **User ID:** {user_id}\n"
+                info_text += f"🌐 **Dil:** {language}\n"
+                info_text += f"📅 **Katılma Tarihi:** {datetime.fromisoformat(join_date).strftime('%d/%m/%Y %H:%M')}\n"
+                info_text += f"⭐ **Premium Durumu:** {status}\n"
+                info_text += f"⏰ **Bitiş Tarihi:** {premium_until_dt.strftime('%d/%m/%Y %H:%M')}\n"
+                info_text += f"📊 **Kalan Gün:** {remaining_days} gün\n"
+                
+                bot.reply_to(message, info_text, parse_mode="Markdown")
+            else:
+                bot.reply_to(message, f"❌ **Kullanıcı premium değil:** {user_id}")
+        else:
+            bot.reply_to(message, f"❌ **Kullanıcı bulunamadı:** {user_id}")
+            
+    except ValueError:
+        bot.reply_to(message, "❌ Geçersiz user_id. Lütfen sayısal değer girin.")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Hata oluştu: {str(e)}")
+
 # Logo ve başlatma
 logo2 = '''
 88  dP 88 88b 88  dP""b8      dP"Yb  8888b.  88 88b 88
@@ -983,3 +1136,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
