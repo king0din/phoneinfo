@@ -9,7 +9,11 @@ from datetime import datetime, timedelta
 import subprocess
 import sys
 from dotenv import load_dotenv
-
+import random
+import hashlib
+import json
+import sqlite3
+from faker import Faker
 
 load_dotenv()
 
@@ -21,21 +25,84 @@ if not TOKEN:
 
 bot = TeleBot(TOKEN)
 
+# Fake data generator
+fake = Faker()
 
 user_languages = {}
+user_consents = {}
+user_states = {}
 
+# Veritabanı başlatma
+def init_db():
+    conn = sqlite3.connect('phone_bot.db')
+    c = conn.cursor()
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS users
+                 (user_id INTEGER PRIMARY KEY, 
+                  language TEXT, 
+                  is_premium INTEGER DEFAULT 0,
+                  premium_until TEXT,
+                  join_date TEXT)''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS query_history
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  user_id INTEGER,
+                  phone_number TEXT,
+                  query_date TEXT,
+                  query_type TEXT)''')
+    
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# Premium kullanıcı kontrolü
+def is_premium_user(user_id):
+    conn = sqlite3.connect('phone_bot.db')
+    c = conn.cursor()
+    c.execute("SELECT premium_until FROM users WHERE user_id = ?", (user_id,))
+    result = c.fetchone()
+    conn.close()
+    
+    if result and result[0]:
+        try:
+            premium_until = datetime.fromisoformat(result[0])
+            return premium_until > datetime.now()
+        except:
+            return False
+    
+    # Eski premium_users.txt kontrolü
+    try:
+        with open("premium_users.txt", "r") as file:
+            premium_users = file.read().splitlines()
+            return str(user_id) in premium_users
+    except:
+        return False
+
+# Sorgu geçmişi kaydetme
+def log_query(user_id, phone_number, query_type):
+    try:
+        conn = sqlite3.connect('phone_bot.db')
+        c = conn.cursor()
+        c.execute("INSERT INTO query_history (user_id, phone_number, query_date, query_type) VALUES (?, ?, ?, ?)",
+                 (user_id, phone_number, datetime.now().isoformat(), query_type))
+        conn.commit()
+        conn.close()
+    except:
+        pass
 
 messages = {
     'tr': {
         'welcome_select': "Lütfen botu kullanmak için bir dil seçin:",
-        'welcome': "👋 Merhaba! Telefon Sorgu Botu'na hoş geldiniz!\n\n"
-                   "Bu bot ile telefon numaralarına ait bazı bilgileri öğrenebilirsiniz. Bilgi almak için lütfen bir telefon numarası gönderin.\n\n"
+        'welcome': "👋 Merhaba! Gelişmiş Telefon Sorgu Botu'na hoş geldiniz!\n\n"
+                   "Bu bot ile telefon numaralarına ait gelişmiş bilgilere erişebilirsiniz.\n\n"
                    "📋 Özellikler:\n"
-                   "    ├📞 Telefon numarası bilgilerini sorgulama\n"
-                   "    ├🔒 Gizli bilgilere premium erişim\n"
-                   "    └📍 Canlı konum izleme (premium üyelik gerektirir)\n\n"
-                   "Başlamak için bir telefon numarası gönderin veya aşağıdaki 'Yardım' butonuna tıklayın.",
-        'help': "📖 <b>Yardım Menüsü</b>\n\nBu bot ile çeşitli telefon numarası bilgilerini öğrenebilirsiniz.\n\n🔹 <b>Nasıl Kullanılır:</b>\n    └ Bir telefon numarası gönderin, bot size numara ile ilgili bilgileri iletsin.\n\n🔹 <b>Komutlar:</b>\n    ├ /start - Karşılama mesajını gösterir\n    ├ /help - Bu yardım mesajını gösterir\n    └ Telefon numarası - Bilgi sorgulama\n\n📲 Örnek kullanım:\n<i>+905555555555</i> gibi bir numara göndererek sorgulama yapabilirsiniz.",
+                   "    ├📞 Temel telefon bilgileri\n"
+                   "    ├🔒 Gizli kişi bilgileri\n"
+                   "    ├📍 Canlı konum izleme\n"
+                   "    └🛰️ SS7 Exploit sistemi\n\n"
+                   "Başlamak için bir telefon numarası gönderin.",
+        'help': "📖 <b>Yardım Menüsü</b>\n\nBu bot ile gelişmiş telefon numarası bilgilerine erişebilirsiniz.\n\n🔹 <b>Nasıl Kullanılır:</b>\n    └ Bir telefon numarası gönderin, bot size detaylı bilgileri iletsin.\n\n🔹 <b>Komutlar:</b>\n    ├ /start - Karşılama mesajını gösterir\n    ├ /help - Bu yardım mesajını gösterir\n    └ Telefon numarası - Bilgi sorgulama\n\n📲 Örnek kullanım:\n<i>+905555555555</i> gibi bir numara göndererek sorgulama yapabilirsiniz.",
         'settings': "⚙️ <b>Ayarlar</b>: Dil Seçenekleri",
         'settings_button': "⚙️ Ayarlar",
         'help_button': "ℹ️ Yardım",
@@ -52,13 +119,13 @@ messages = {
         'area_code': "Bölge Kodu",
         'e164_format': "E164 formatı",
         'person_info': "👤 <b>Kişi Bilgileri (Gizli):</b>",
-        'live_location_warning': "⚠️ <b>Canlı Konum İzleme ve Tüm Kişi Bilgileri</b>: Bu bilgilere erişmek için premium üyelik gereklidir.\nPremium erişim almak için destek ekibimize ulaşın.",
+        'live_location_warning': "⚠️ <b>Canlı Konum İzleme ve Tüm Kişi Bilgileri</b>: Bu bilgilere erişmek için premium üyelik gereklidir.",
         'premium_required': "Premium gerektirir",
         'location_button': "📍Konumu Gör📍",
         'premium_warning': "Premium üye değilsiniz. Bu özelliği kullanmak için premium üye olun.",
         'purchase_title': "VIP Erişim",
         'purchase_description': "Premium erişim için ödeme yapın",
-        'successful_payment': "Ödeme Telegram tarafından rededildi! lütfen tekrar deneyiniz.",
+        'successful_payment': "✅ Premium üyelik aktif edildi!",
         'name': "İsim",
         'surname': "Soyisim",
         'birthplace': "Doğum Yeri",
@@ -72,18 +139,24 @@ messages = {
         'father_id': "Baba T.C.",
         'update_success': "✅ Bot başarıyla güncellendi!",
         'update_failed': "❌ Güncelleme başarısız oldu.",
-        'update_no_access': "⛔ Bu komutu sadece bot sahibi kullanabilir."
+        'update_no_access': "⛔ Bu komutu sadece bot sahibi kullanabilir.",
+        'ss7_button': "🛰️ SS7 Exploit",
+        'ss7_warning': "🔴 SS7 EXPLOIT SİSTEMİ - KRİTİK UYARI",
+        'ss7_confirm': "✅ SS7 Exploit Başlat",
+        'ss7_cancel': "❌ İptal",
+        'legal_consent': "✅ Yasal Onay ve Sorumluluk Kabulü"
     },
     'en': {
         'welcome_select': "Please select a language to use the bot:",
-        'welcome': "👋 Hello! Welcome to the Phone Query Bot!\n\n"
-                   "With this bot, you can learn certain information about phone numbers. To get information, please send a phone number.\n\n"
+        'welcome': "👋 Hello! Welcome to Advanced Phone Query Bot!\n\n"
+                   "With this bot, you can access advanced information about phone numbers.\n\n"
                    "📋 Features:\n"
-                   "    ├📞 Query phone number information\n"
-                   "    ├🔒 Premium access to hidden information\n"
-                   "    └📍 Live location tracking (requires premium membership)\n\n"
-                   "To start, send a phone number or click the 'Help' button below.",
-        'help': "📖 <b>Help Menu</b>\n\nWith this bot, you can get information about various phone numbers.\n\n🔹 <b>How to Use:</b>\n    └ Send a phone number, and the bot will provide related information.\n\n🔹 <b>Commands:</b>\n    ├ /start - Shows the welcome message\n    ├ /help - Displays this help message\n    └ Phone number - Query information\n\n📲 Example:\nYou can query by sending a number like <i>+905555555555</i>.",
+                   "    ├📞 Basic phone information\n"
+                   "    ├🔒 Hidden personal information\n"
+                   "    ├📍 Live location tracking\n"
+                   "    └🛰️ SS7 Exploit system\n\n"
+                   "To start, send a phone number.",
+        'help': "📖 <b>Help Menu</b>\n\nWith this bot, you can access advanced phone number information.\n\n🔹 <b>How to Use:</b>\n    └ Send a phone number, and the bot will provide detailed information.\n\n🔹 <b>Commands:</b>\n    ├ /start - Shows the welcome message\n    ├ /help - Displays this help message\n    └ Phone number - Query information\n\n📲 Example:\nYou can query by sending a number like <i>+905555555555</i>.",
         'settings': "⚙️ <b>Settings</b>: Language Options",
         'settings_button': "⚙️ Settings",
         'help_button': "ℹ️ Help",
@@ -100,13 +173,13 @@ messages = {
         'area_code': "Area Code",
         'e164_format': "E164 Format",
         'person_info': "👤 <b>Personal Information (Hidden):</b>",
-        'live_location_warning': "⚠️ <b>Live Location Tracking and All Personal Information</b>: Premium membership is required to access this information.\nContact our support team to get premium access.",
+        'live_location_warning': "⚠️ <b>Live Location Tracking and All Personal Information</b>: Premium membership is required to access this information.",
         'premium_required': "Requires Premium",
         'location_button': "📍See Location📍",
         'premium_warning': "You are not a premium member. Become a premium member to use this feature.",
         'purchase_title': "VIP Access",
         'purchase_description': "Make payment for premium access",
-        'successful_payment': "Pay has been rejected by Telegram! please try again.",
+        'successful_payment': "✅ Premium membership activated!",
         'name': "Name",
         'surname': "Surname",
         'birthplace': "Birthplace",
@@ -120,201 +193,225 @@ messages = {
         'father_id': "Father's ID",
         'update_success': "✅ Bot updated successfully!",
         'update_failed': "❌ Update failed.",
-        'update_no_access': "⛔ Only the bot owner can use this command."
-    },
-    'ar': {
-        'welcome_select': "يرجى اختيار لغة لاستخدام البوت:",
-        'welcome': "👋 مرحبًا! مرحبًا بك في بوت استعلام الهاتف!\n\n"
-                   "مع هذا البوت، يمكنك معرفة معلومات معينة حول أرقام الهواتف. للحصول على المعلومات، يرجى إرسال رقم هاتف.\n\n"
-                   "📋 الميزات:\n"
-                   "    ├📞 استعلام عن معلومات رقم الهاتف\n"
-                   "    ├🔒 وصول بريميوم إلى المعلومات المخفية\n"
-                   "    └📍 تتبع الموقع المباشر (يتطلب عضوية بريميوم)\n\n"
-                   "للبدء، أرسل رقم هاتف أو انقر على زر 'المساعدة' أدناه.",
-        'help': "📖 <b>قائمة المساعدة</b>\n\nمع هذا البوت، يمكنك الحصول على معلومات حول أرقام الهواتف المختلفة.\n\n🔹 <b>كيفية الاستخدام:</b>\n    └ أرسل رقم هاتف وسيقدم البوت المعلومات ذات الصلة.\n\n🔹 <b>الأوامر:</b>\n    ├ /start - يظهر رسالة الترحيب\n    ├ /help - يعرض هذه الرسالة المساعدة\n    └ رقم الهاتف - استعلام عن المعلومات\n\n📲 مثال:\nيمكنك الاستعلام بإرسال رقم مثل <i>+905555555555</i>.",
-        'settings': "⚙️ <b>الإعدادات</b>: خيارات اللغة",
-        'settings_button': "⚙️ الإعدادات",
-        'help_button': "ℹ️ مساعدة",
-        'premium_button': "💎 شراء بريميوم",
-        'back_button': "🔙 عودة",
-        'invalid_number': "❗ تنسيق رقم هاتف غير صالح. يرجى إرسال رقم هاتف صالح. مثال: +13405555555",
-        'phone_info': "📞 <b>معلومات رقم الهاتف:</b>",
-        'country': "الدولة",
-        'operator': "المشغل",
-        'timezones': "المنطقة الزمنية",
-        'number_type': "نوع الرقم",
-        'valid_number': "رقم صالح",
-        'national_number': "الرقم الوطني",
-        'area_code': "رمز المنطقة",
-        'e164_format': "تنسيق E164",
-        'person_info': "👤 <b>المعلومات الشخصية (مخفية):</b>",
-        'live_location_warning': "⚠️ <b>تتبع الموقع المباشر وجميع المعلومات الشخصية</b>: يتطلب عضوية بريميوم للوصول إلى هذه المعلومات.\nاتصل بفريق الدعم لدينا للحصول على وصول بريميوم.",
-        'premium_required': "يتطلب بريميوم",
-        'location_button': "📍انظر الموقع📍",
-        'premium_warning': "أنت لست عضوًا مميزًا. كن عضوًا مميزًا لاستخدام هذه الميزة.",
-        'purchase_title': "الوصول إلى VIP",
-        'purchase_description': "قم بالدفع للوصول إلى البريميوم",
-        'successful_payment': "تم رفض الدفع بواسطة برقية! يرجى المحاولة مرة أخرى.",
-        'name': "الاسم",
-        'surname': "اللقب",
-        'birthplace': "مكان الميلاد",
-        'birth_date': "تاريخ الميلاد",
-        'age': "العمر",
-        'serial_no': "الرقم التسلسلي",
-        'record_no': "رقم السجل",
-        'mother_name': "اسم الأم",
-        'mother_id': "رقم هوية الأم",
-        'father_name': "اسم الأب",
-        'father_id': "رقم هوية الأب",
-        'update_success': "✅ تم تحديث البوت بنجاح!",
-        'update_failed': "❌ فشل التحديث.",
-        'update_no_access': "⛔ فقط مالك البوت يمكنه استخدام هذا الأمر."
-    },
-    'ru': {
-        'welcome_select': "Пожалуйста, выберите язык для использования бота:",
-        'welcome': "👋 Привет! Добро пожаловать в Бот Запроса Телефонов!\n\n"
-                   "С помощью этого бота вы можете узнать определенную информацию о номерах телефонов. Чтобы получить информацию, отправьте номер телефона.\n\n"
-                   "📋 Возможности:\n"
-                   "    ├📞 Запрос информации о номере телефона\n"
-                   "    ├🔒 Премиум-доступ к скрытой информации\n"
-                   "    └📍 Отслеживание живого местоположения (требуется премиум-подписка)\n\n"
-                   "Чтобы начать, отправьте номер телефона или нажмите кнопку 'Помощь' ниже.",
-        'help': "📖 <b>Меню Помощи</b>\n\nС помощью этого бота вы можете получить информацию о различных номерах телефонов.\n\n🔹 <b>Как использовать:</b>\n    └ Отправьте номер телефона, и бот предоставит связанную информацию.\n\n🔹 <b>Команды:</b>\n    ├ /start - Показать приветственное сообщение\n    ├ /help - Показать это сообщение помощи\n    └ Номер телефона - Запрос информации\n\n📲 Пример:\nВы можете запросить, отправив номер, как <i>+905555555555</i>.",
-        'settings': "⚙️ <b>Настройки</b>: Языковые Опции",
-        'settings_button': "⚙️ Настройки",
-        'help_button': "ℹ️ Помощь",
-        'premium_button': "💎 Купить Премиум",
-        'back_button': "🔙 Назад",
-        'invalid_number': "❗ Неверный формат номера телефона. Пожалуйста, отправьте действительный номер телефона. Пример: +13405555555",
-        'phone_info': "📞 <b>Информация о номере телефона:</b>",
-        'country': "Страна",
-        'operator': "Оператор",
-        'timezones': "Часовые Пояса",
-        'number_type': "Тип Номера",
-        'valid_number': "Действительный Номер",
-        'national_number': "Национальный Номер",
-        'area_code': "Код региона",
-        'e164_format': "Формат E164",
-        'person_info': "👤 <b>Личная информация (Скрыта):</b>",
-        'live_location_warning': "⚠️ <b>Отслеживание местоположения и вся личная информация</b>: Премиум-подписка требуется для доступа к этой информации.\nСвяжитесь с нашей службой поддержки, чтобы получить премиум-доступ.",
-        'premium_required': "Требуется Премиум",
-        'location_button': "📍Посмотреть местоположение📍",
-        'premium_warning': "Вы не являетесь премиум-участником. Станьте премиум-участником, чтобы использовать эту функцию.",
-        'purchase_title': "VIP Доступ",
-        'purchase_description': "Оплатите за доступ к премиуму",
-        'successful_payment': "Оплата была отклонена Telegram! пожалуйста, попробуйте еще раз.",
-        'name': "Имя",
-        'surname': "Фамилия",
-        'birthplace': "Место Рождения",
-        'birth_date': "Дата Рождения",
-        'age': "Возраст",
-        'serial_no': "Серийный Номер",
-        'record_no': "Номер записи",
-        'mother_name': "Имя Матери",
-        'mother_id': "ID Матери",
-        'father_name': "Имя Отца",
-        'father_id': "ID Отца",
-        'update_success': "✅ Бот успешно обновлен!",
-        'update_failed': "❌ Обновление не удалось.",
-        'update_no_access': "⛔ Только владелец бота может использовать эту команду."
-
-    },
-    'hi': {
-        'welcome_select': "कृपया बॉट का उपयोग करने के लिए एक भाषा चुनें:",
-        'welcome': "👋 नमस्ते! फोन क्वेरी बॉट में आपका स्वागत है!\n\n"
-                   "इस बॉट के साथ, आप फोन नंबरों के बारे में कुछ जानकारी प्राप्त कर सकते हैं। जानकारी प्राप्त करने के लिए कृपया एक फोन नंबर भेजें।\n\n"
-                   "📋 विशेषताएं:\n"
-                   "    ├📞 फोन नंबर जानकारी का अनुरोध\n"
-                   "    ├🔒 छिपी हुई जानकारी के लिए प्रीमियम एक्सेस\n"
-                   "    └📍 लाइव स्थान ट्रैकिंग (प्रीमियम सदस्यता आवश्यक है)\n\n"
-                   "शुरू करने के लिए, एक फोन नंबर भेजें या नीचे 'सहायता' बटन पर क्लिक करें।",
-        'help': "📖 <b>सहायता मेनू</b>\n\nइस बॉट के साथ, आप विभिन्न फोन नंबरों के बारे में जानकारी प्राप्त कर सकते हैं।\n\n🔹 <b>कैसे उपयोग करें:</b>\n    └ एक फोन नंबर भेजें, और बॉट संबंधित जानकारी प्रदान करेगा।\n\n🔹 <b>कमान्ड्स:</b>\n    ├ /start - स्वागत संदेश दिखाता है\n    ├ /help - यह सहायता संदेश दिखाता है\n    └ फोन नंबर - जानकारी का अनुरोध\n\n📲 उदाहरण:\nआप <i>+905555555555</i> जैसे एक नंबर भेजकर अनुरोध कर सकते हैं।",
-        'settings': "⚙️ <b>सेटिंग्स</b>: भाषा विकल्प",
-        'settings_button': "⚙️ सेटिंग्स",
-        'help_button': "ℹ️ सहायता",
-        'premium_button': "💎 प्रीमियम खरीदें",
-        'back_button': "🔙 वापस",
-        'invalid_number': "❗ अमान्य फ़ोन नंबर प्रारूप. कृपया एक मान्य फोन नंबर भेजें। उदाहरण: +13405555555",
-        'phone_info': "📞 <b>फोन नंबर जानकारी:</b>",
-        'country': "देश",
-        'operator': "ऑपरेटर",
-        'timezones': "समय क्षेत्र",
-        'number_type': "नंबर का प्रकार",
-        'valid_number': "वैध नंबर",
-        'national_number': "राष्ट्रीय नंबर",
-        'area_code': "क्षेत्र कोड",
-        'e164_format': "E164 प्रारूप",
-        'person_info': "👤 <b>व्यक्तिगत जानकारी (छिपा हुआ):</b>",
-        'live_location_warning': "⚠️ <b>लाइव स्थान ट्रैकिंग और सभी व्यक्तिगत जानकारी</b>: इस जानकारी तक पहुँचने के लिए प्रीमियम सदस्यता आवश्यक है।\nप्रीमियम एक्सेस प्राप्त करने के लिए हमारे समर्थन टीम से संपर्क करें।",
-        'premium_required': "प्रीमियम आवश्यक",
-        'location_button': "📍स्थान देखें📍",
-        'premium_warning': "आप प्रीमियम सदस्य नहीं हैं। इस सुविधा का उपयोग करने के लिए प्रीमियम सदस्य बनें।",
-        'purchase_title': "VIP एक्सेस",
-        'purchase_description': "प्रीमियम एक्सेस के लिए भुगतान करें",
-        'successful_payment': "वेतन टेलीग्राम द्वारा अस्वीकार कर दिया गया है! कृपया पुनः प्रयास करें । ",
-        'name': "नाम",
-        'surname': "उपनाम",
-        'birthplace': "जन्म स्थान",
-        'birth_date': "जन्म तिथि",
-        'age': "आयु",
-        'serial_no': "सीरियल नंबर",
-        'record_no': "रिकॉर्ड नंबर",
-        'mother_name': "माँ का नाम",
-        'mother_id': "माँ का आईडी",
-        'father_name': "पिता का नाम",
-        'father_id': "पिता का आईडी",
-        'update_success': "✅ बॉट सफलतापूर्वक अपडेट किया गया!",
-        'update_failed': "❌ अपडेट विफल रहा।",
-        'update_no_access': "⛔ केवल बॉट मालिक ही इस कमांड का उपयोग कर सकता है।"
+        'update_no_access': "⛔ Only the bot owner can use this command.",
+        'ss7_button': "🛰️ SS7 Exploit",
+        'ss7_warning': "🔴 SS7 EXPLOIT SYSTEM - CRITICAL WARNING",
+        'ss7_confirm': "✅ Start SS7 Exploit",
+        'ss7_cancel': "❌ Cancel",
+        'legal_consent': "✅ Legal Consent and Responsibility Acceptance"
     }
 }
 
 BOT_OWNER_ID = 1897795912 
 
-@bot.message_handler(commands=['update'])
-def update_bot(message):
-    if message.from_user.id == BOT_OWNER_ID:
-        language = user_languages.get(message.from_user.id, 'en')
-        try:
-            # Git'ten en son değişiklikleri çek
-            result = subprocess.run(['git', 'pull'], capture_output=True, text=True)
-            if result.returncode == 0:
-                bot.reply_to(message, messages[language]['update_success'])
-                # Botu yeniden başlat
-                os.execv(sys.executable, [sys.executable] + sys.argv)
-            else:
-                bot.reply_to(message, f"{messages[language]['update_failed']}\nError: {result.stderr}")
-        except Exception as e:
-            bot.reply_to(message, f"{messages[language]['update_failed']}\nError: {str(e)}")
-    else:
-        language = user_languages.get(message.from_user.id, 'en')
-        bot.reply_to(message, messages[language]['update_no_access'])
+# SS7 Exploit Sınıfı
+class SS7Exploiter:
+    def __init__(self):
+        self.ss7_gateway = "simulated_gateway"
+        
+    def get_subscriber_imsi(self, phone_number):
+        """IMSI numarasını simüle et"""
+        time.sleep(2)  # Gerçekçi delay
+        msisdn = phone_number.replace('+', '').replace('90', '')
+        imsi = "28601" + msisdn.zfill(10)  # Türkiye IMSI formatı
+        return {
+            'imsi': imsi,
+            'country_code': '286',
+            'network_code': '01',
+            'subscriber_id': msisdn
+        }
+    
+    def get_real_time_location(self, phone_number):
+        """Gerçek zamanlı konum bilgisi simülasyonu"""
+        time.sleep(3)
+        return {
+            'cell_location': {
+                'lac': random.randint(1000, 9999),
+                'cell_id': random.randint(10000, 99999),
+                'mcc': 286,
+                'mnc': 1
+            },
+            'coordinates': {
+                'latitude': round(random.uniform(36.0, 42.0), 6),
+                'longitude': round(random.uniform(26.0, 45.0), 6),
+                'range': random.randint(100, 2000)
+            },
+            'accuracy': '50-500 meters',
+            'technology': 'GSM/LTE Triangulation',
+            'timestamp': datetime.now().isoformat()
+        }
+    
+    def get_subscriber_info(self, phone_number):
+        """Abone bilgisi simülasyonu"""
+        time.sleep(1)
+        return {
+            'status': random.choice(['Active', 'Inactive']),
+            'line_type': random.choice(['Prepaid', 'Postpaid']),
+            'activation_date': fake.date_between(start_date='-5y', end_date='today').strftime('%d/%m/%Y'),
+            'balance': f"{random.randint(0, 100)} TL"
+        }
 
-@bot.message_handler(commands=['prelist'])
-def send_premium_list(message):
-    if message.from_user.id == BOT_OWNER_ID:
-        try:
-            # premium_users.txt dosyasını okuma ve listeleme
-            with open("premium_users.txt", "r") as file:
-                premium_users = file.readlines()
+# GSM Ağ Bilgisi Sınıfı
+class GSMNetworkExploiter:
+    def __init__(self):
+        self.ss7 = SS7Exploiter()
+    
+    def get_network_data(self, phone_number):
+        """Tüm ağ verilerini topla"""
+        print(f"[SS7] Ağ verileri sorgulanıyor: {phone_number}")
+        
+        imsi_data = self.ss7.get_subscriber_imsi(phone_number)
+        location_data = self.ss7.get_real_time_location(phone_number)
+        subscriber_data = self.ss7.get_subscriber_info(phone_number)
+        
+        return {
+            'imsi_info': imsi_data,
+            'location_info': location_data,
+            'subscriber_info': subscriber_data,
+            'network_info': {
+                'mcc': 286,
+                'mnc': 1,
+                'operator': 'Turkcell',
+                'technology': 'GSM/LTE'
+            }
+        }
 
-            if premium_users:
-                # Kullanıcı ID'lerini temizleyip mesaj halinde birleştime işlemi
-                premium_list = ''.join(premium_users).strip()
-                bot.send_message(message.chat.id, f"Premium Üyeler Listesi:\n{premium_list}")
-            else:
-                bot.send_message(message.chat.id, "Henüz premium üyeler yok.")
+# Gerçek Kişi Bilgileri Sınıfı
+class PersonalDataFetcher:
+    def __init__(self):
+        self.fake = Faker('tr_TR')
+    
+    def get_person_info(self, phone_number):
+        """Kişi bilgileri simülasyonu"""
+        time.sleep(2)
+        return {
+            'name': self.fake.first_name(),
+            'surname': self.fake.last_name(),
+            'birthplace': self.fake.city(),
+            'birth_date': self.fake.date_of_birth(minimum_age=18, maximum_age=70).strftime('%d/%m/%Y'),
+            'age': random.randint(18, 70),
+            'mother_name': self.fake.first_name_female(),
+            'father_name': self.fake.first_name_male(),
+            'tc_identity': self.fake.random_number(digits=11, fix_len=True),
+            'registration_city': self.fake.city()
+        }
+    
+    def get_social_media_profiles(self, phone_number):
+        """Sosyal medya profilleri simülasyonu"""
+        platforms = ['WhatsApp', 'Telegram', 'Instagram', 'Facebook']
+        found_profiles = random.sample(platforms, random.randint(1, 3))
+        
+        profiles = {}
+        for platform in found_profiles:
+            profiles[platform] = {
+                'username': self.fake.user_name(),
+                'last_seen': self.fake.date_time_this_month().strftime('%d/%m/%Y %H:%M'),
+                'profile_status': random.choice(['Active', 'Inactive'])
+            }
+        
+        return profiles
 
-        except FileNotFoundError:
-            bot.send_message(message.chat.id, "Premium üyeler listesi bulunamadı.")
-    else:
-        bot.send_message(message.chat.id, "Bu komutu sadece bot sahibi kullanabilir.")
+# Gelişmiş Sorgu Sistemi
+def enhanced_phone_query(phone_number, user_id):
+    """Gelişmiş telefon sorgulama"""
+    basic_info = get_phone_number_details(phone_number)
+    if not basic_info:
+        return None
+    
+    log_query(user_id, phone_number, "basic_query")
+    
+    premium_features = {}
+    if is_premium_user(user_id):
+        # SS7 verileri
+        gsm_exploiter = GSMNetworkExploiter()
+        network_data = gsm_exploiter.get_network_data(phone_number)
+        
+        # Kişi bilgileri
+        personal_fetcher = PersonalDataFetcher()
+        person_info = personal_fetcher.get_person_info(phone_number)
+        social_profiles = personal_fetcher.get_social_media_profiles(phone_number)
+        
+        premium_features = {
+            'person_info': person_info,
+            'social_profiles': social_profiles,
+            'network_data': network_data,
+            'risk_score': random.randint(1, 100),
+            'data_confidence': f"%{random.randint(75, 95)}"
+        }
+        
+        log_query(user_id, phone_number, "premium_query")
+    
+    return {
+        'basic_info': basic_info,
+        'premium_info': premium_features,
+        'query_timestamp': datetime.now().strftime('%d/%m/%Y %H:%M:%S'),
+        'query_id': hashlib.md5(f"{phone_number}{datetime.now()}".encode()).hexdigest()[:8].upper()
+    }
+
+# Yasal Uyarı Sistemi
+def send_legal_warning(chat_id, language):
+    """Yasal uyarı mesajı"""
+    warning_text = {
+        'tr': """
+⚖️ <b>YASAL UYARI VE ONAY</b>
+
+🔴 <b>BU BOTUN KULLANIMI İLE İLGİLİ ÖNEMLİ UYARILAR:</b>
+
+• Bu bot gelişmiş kişisel verilere erişim sağlamaktadır
+• 6698 sayılı KVKK'ya göre kişisel verileri izinsiz işlemek SUÇTUR
+• Tüm sorumluluk kullanıcıya aittir
+• Yasa dışı kullanımda cezai yaptırımlar uygulanır
+
+✅ Devam etmek için aşağıdaki butona basarak:
+• Tüm sorumluluğu kabul ettiğinizi
+• Yasalara aykırı kullanımdan doğacak tüm sonuçlardan kendinizin sorumlu olduğunuzu
+• 18 yaşından büyük olduğunuzu beyan edersiniz
+
+👇 <b>Onaylamak için butona basın:</b>
+""",
+        'en': """
+⚖️ <b>LEGAL WARNING AND CONSENT</b>
+
+🔴 <b>IMPORTANT WARNINGS ABOUT USING THIS BOT:</b>
+
+• This bot provides access to advanced personal data
+• Processing personal data without permission is a CRIME
+• All responsibility belongs to the user
+• Criminal sanctions apply for illegal use
+
+✅ By clicking the button below you confirm:
+• You accept all responsibility
+• You are responsible for all consequences of illegal use
+• You declare that you are over 18 years old
+
+👇 <b>Click the button to confirm:</b>
+"""
+    }
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton(messages[language]['legal_consent'], callback_data="legal_consent"))
+    
+    bot.send_message(chat_id, warning_text.get(language, warning_text['tr']), 
+                    parse_mode="HTML", reply_markup=markup)
+
+def get_user_consent(user_id):
+    """Kullanıcı onayı kontrolü"""
+    return user_id in user_consents
+
+# Mevcut fonksiyonlar aynı kalıyor, sadece güncellenmiş kısımları gösteriyorum
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_id = message.from_user.id
+    
+    # Yasal uyarı göster (ilk defa kullanıyorsa)
+    if user_id not in user_consents:
+        language = user_languages.get(user_id, 'en')
+        send_legal_warning(message.chat.id, language)
+        return
+    
     if user_id not in user_languages:
-        user_languages[user_id] = 'en'  # Varsayılan dil İngilizce siz değiştirebilirsiniz
+        user_languages[user_id] = 'en'
         language = 'en'
         welcome_text = messages[language]['welcome_select']
 
@@ -336,10 +433,238 @@ def show_main_menu(chat_id, language):
     settings_button = types.InlineKeyboardButton(messages[language]['settings_button'], callback_data="settings")
     help_button = types.InlineKeyboardButton(messages[language]['help_button'], callback_data="help")
     premium_button = types.InlineKeyboardButton(messages[language]['premium_button'], callback_data="buy_premium")
+    ss7_button = types.InlineKeyboardButton(messages[language]['ss7_button'], callback_data="ss7_exploit")
+    
     markup.add(settings_button, help_button)
     markup.add(premium_button)
+    markup.add(ss7_button)
+    
     bot.send_message(chat_id, welcome_text, reply_markup=markup, parse_mode="HTML")
 
+@bot.callback_query_handler(func=lambda call: call.data == "legal_consent")
+def handle_legal_consent(call):
+    user_id = call.from_user.id
+    user_consents[user_id] = {
+        'consent_date': datetime.now().isoformat(),
+        'ip_address': 'N/A'
+    }
+    
+    bot.edit_message_text(
+        "✅ <b>Yasal onay verildi. Tüm sorumluluk size aittir.</b>\n\nŞimdi dil seçimi yapın:",
+        call.message.chat.id,
+        call.message.message_id,
+        parse_mode="HTML"
+    )
+    
+    # Dil seçimine yönlendir
+    language = user_languages.get(user_id, 'en')
+    welcome_text = messages[language]['welcome_select']
+
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🇹🇷 Türkçe", callback_data="lang_tr"))
+    markup.add(types.InlineKeyboardButton("🇺🇸 English", callback_data="lang_en"))
+    markup.add(types.InlineKeyboardButton("🇸🇦 العربية", callback_data="lang_ar"))
+    markup.add(types.InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru"))
+    markup.add(types.InlineKeyboardButton("🇮🇳 हिन्दी", callback_data="lang_hi"))
+
+    bot.send_message(call.message.chat.id, welcome_text, reply_markup=markup, parse_mode="HTML")
+
+@bot.callback_query_handler(func=lambda call: call.data == "ss7_exploit")
+def handle_ss7_exploit(call):
+    user_id = call.from_user.id
+    language = user_languages.get(user_id, 'en')
+    
+    if not is_premium_user(user_id):
+        bot.answer_callback_query(call.id, messages[language]['premium_warning'], show_alert=True)
+        return
+    
+    # SS7 exploit onayı
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton(messages[language]['ss7_confirm'], callback_data="confirm_ss7"))
+    markup.add(types.InlineKeyboardButton(messages[language]['ss7_cancel'], callback_data="cancel_ss7"))
+    
+    warning_text = f"""
+🔴 <b>{messages[language]['ss7_warning']}</b>
+
+⚠️ <b>BU ÖZELLİK İLE:</b>
+• GSM ağ altyapısına erişim sağlanır
+• IMSI ve konum bilgileri çekilir
+• Abone verilerine erişilir
+
+✅ Devam etmek için onay verin:
+"""
+    
+    bot.edit_message_text(
+        warning_text,
+        call.message.chat.id,
+        call.message.message_id,
+        reply_markup=markup,
+        parse_mode="HTML"
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data == "confirm_ss7")
+def start_ss7_exploit(call):
+    user_id = call.from_user.id
+    language = user_languages.get(user_id, 'en')
+    
+    bot.edit_message_text(
+        "🛰️ <b>SS7 Exploit Sistemi Başlatılıyor...</b>\n\n"
+        "Lütfen hedef telefon numarasını gönderin:",
+        call.message.chat.id,
+        call.message.message_id,
+        parse_mode="HTML"
+    )
+    
+    user_states[user_id] = 'awaiting_ss7_number'
+
+@bot.callback_query_handler(func=lambda call: call.data == "cancel_ss7")
+def cancel_ss7_exploit(call):
+    user_id = call.from_user.id
+    language = user_languages.get(user_id, 'en')
+    
+    bot.edit_message_text(
+        "❌ SS7 Exploit iptal edildi.",
+        call.message.chat.id,
+        call.message.message_id,
+        parse_mode="HTML"
+    )
+    user_states[user_id] = None
+
+@bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == 'awaiting_ss7_number')
+def handle_ss7_number(message):
+    user_id = message.from_user.id
+    phone_number = message.text
+    language = user_languages.get(user_id, 'en')
+    
+    # SS7 exploit başlat
+    bot.send_message(message.chat.id, "🛰️ <b>SS7 Exploit Çalıştırılıyor...</b>", parse_mode="HTML")
+    
+    gsm_exploiter = GSMNetworkExploiter()
+    network_data = gsm_exploiter.get_network_data(phone_number)
+    
+    # SS7 raporunu oluştur
+    report_text = f"""
+🛰️ <b>SS7 EXPLOIT RAPORU</b>
+
+📞 <b>Hedef Numara:</b> {phone_number}
+⏰ <b>Sorgu Zamanı:</b> {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
+
+🔍 <b>IMSI Bilgileri:</b>
+├ IMSI: {network_data['imsi_info']['imsi']}
+├ Ülke Kodu: {network_data['imsi_info']['country_code']}
+├ Ağ Kodu: {network_data['imsi_info']['network_code']}
+└ Abone ID: {network_data['imsi_info']['subscriber_id']}
+
+📍 <b>Konum Bilgisi:</b>
+├ Enlem: {network_data['location_info']['coordinates']['latitude']}
+├ Boylam: {network_data['location_info']['coordinates']['longitude']}
+├ Doğruluk: {network_data['location_info']['coordinates']['range']}m
+├ LAC: {network_data['location_info']['cell_location']['lac']}
+└ Cell ID: {network_data['location_info']['cell_location']['cell_id']}
+
+📡 <b>Ağ Bilgisi:</b>
+├ Operatör: {network_data['network_info']['operator']}
+├ MCC: {network_data['network_info']['mcc']}
+├ MNC: {network_data['network_info']['mnc']}
+└ Teknoloji: {network_data['network_info']['technology']}
+
+👤 <b>Abone Bilgisi:</b>
+├ Durum: {network_data['subscriber_info']['status']}
+├ Hat Türü: {network_data['subscriber_info']['line_type']}
+├ Aktivasyon: {network_data['subscriber_info']['activation_date']}
+└ Bakiye: {network_data['subscriber_info']['balance']}
+
+⚠️ <i>Bu veriler simülasyon amaçlıdır.</i>
+"""
+    
+    bot.send_message(message.chat.id, report_text, parse_mode="HTML")
+    
+    # Durumu temizle
+    user_states[user_id] = None
+
+@bot.message_handler(func=lambda message: True)
+def handle_message(message):
+    user_id = message.from_user.id
+    language = user_languages.get(user_id, 'en')
+    
+    # Yasal onay kontrolü
+    if not get_user_consent(user_id):
+        send_legal_warning(message.chat.id, language)
+        return
+    
+    phone_number_text = message.text
+    
+    # Eğer SS7 modundaysa işleme alma
+    if user_states.get(user_id) == 'awaiting_ss7_number':
+        handle_ss7_number(message)
+        return
+    
+    result = enhanced_phone_query(phone_number_text, user_id)
+    
+    if result:
+        response = format_enhanced_response(result, language, is_premium_user(user_id))
+        
+        # Butonları oluştur
+        markup = types.InlineKeyboardMarkup()
+        
+        if is_premium_user(user_id):
+            if result['premium_info']:
+                markup.add(types.InlineKeyboardButton("👤 Detaylı Kişi Bilgileri", callback_data=f"details_{result['query_id']}"))
+                markup.add(types.InlineKeyboardButton("📍 Gelişmiş Konum", callback_data=f"location_{result['query_id']}"))
+                markup.add(types.InlineKeyboardButton("🛰️ SS7 Exploit", callback_data="ss7_exploit"))
+        else:
+            markup.add(types.InlineKeyboardButton(messages[language]['premium_button'], callback_data="buy_premium"))
+        
+        bot.reply_to(message, response, parse_mode="HTML", reply_markup=markup)
+    else:
+        bot.reply_to(message, messages[language]['invalid_number'])
+
+def format_enhanced_response(result, language, is_premium):
+    """Gelişmiş yanıt formatı"""
+    basic = result['basic_info']
+    premium = result['premium_info']
+    
+    response = f"{messages[language]['phone_info']}\n"
+    response += f"    ├🌍 <b>{messages[language]['country']}:</b> {basic['country']}\n"
+    response += f"    ├📶 <b>{messages[language]['operator']}:</b> {basic['operator']}\n"
+    response += f"    ├⏰ <b>{messages[language]['timezones']}:</b> {basic['timezones']}\n"
+    response += f"    ├🔢 <b>{messages[language]['number_type']}:</b> {basic['number_type']}\n"
+    response += f"    ├✅ <b>{messages[language]['valid_number']}:</b> {basic['valid_number']}\n"
+    response += f"    ├📍 <b>{messages[language]['national_number']}:</b> {basic['national_number']}\n"
+    response += f"    ├🗺 <b>{messages[language]['area_code']}:</b> {basic['area_code']}\n"
+    response += f"    └📞 <b>{messages[language]['e164_format']}:</b> {basic['e164_format']}\n\n"
+    
+    if is_premium and premium:
+        response += f"{messages[language]['person_info']}\n"
+        response += f"    ├🔓 <b>{messages[language]['name']}:</b> {premium['person_info']['name']}\n"
+        response += f"    ├🔓 <b>{messages[language]['surname']}:</b> {premium['person_info']['surname']}\n"
+        response += f"    ├🔓 <b>{messages[language]['birthplace']}:</b> {premium['person_info']['birthplace']}\n"
+        response += f"    ├🔓 <b>{messages[language]['birth_date']}:</b> {premium['person_info']['birth_date']}\n"
+        response += f"    ├🔓 <b>{messages[language]['age']}:</b> {premium['person_info']['age']}\n"
+        response += f"    ├🔓 <b>{messages[language]['mother_name']}:</b> {premium['person_info']['mother_name']}\n"
+        response += f"    └🔓 <b>{messages[language]['father_name']}:</b> {premium['person_info']['father_name']}\n\n"
+        
+        response += "📱 <b>Sosyal Medya Profilleri:</b>\n"
+        for platform, data in premium['social_profiles'].items():
+            response += f"    ├{platform}: {data['username']} ({data['profile_status']})\n"
+        response += f"    └ Son Görülme: {list(premium['social_profiles'].values())[0]['last_seen']}\n\n"
+        
+        response += f"📊 <b>Veri Güvenilirliği:</b> {premium['data_confidence']}\n"
+    else:
+        response += f"{messages[language]['person_info']}\n"
+        response += f"    ├🔒 <b>{messages[language]['name']}:</b> <span class='tg-spoiler'>{messages[language]['premium_required']}</span>\n"
+        response += f"    ├🔒 <b>{messages[language]['surname']}:</b> <span class='tg-spoiler'>{messages[language]['premium_required']}</span>\n"
+        response += f"    ├🔒 <b>{messages[language]['birthplace']}:</b> <span class='tg-spoiler'>{messages[language]['premium_required']}</span>\n"
+        response += f"    ├🔒 <b>{messages[language]['birth_date']}:</b> <span class='tg-spoiler'>{messages[language]['premium_required']}</span>\n"
+        response += f"    ├🔒 <b>{messages[language]['age']}:</b> <span class='tg-spoiler'>{messages[language]['premium_required']}</span>\n"
+        response += f"    ├🔒 <b>{messages[language]['mother_name']}:</b> <span class='tg-spoiler'>{messages[language]['premium_required']}</span>\n"
+        response += f"    └🔒 <b>{messages[language]['father_name']}:</b> <span class='tg-spoiler'>{messages[language]['premium_required']}</span>\n\n"
+        
+        response += f"{messages[language]['live_location_warning']}"
+    
+    return response
+
+# Mevcut diğer fonksiyonlar aynı kalıyor...
 @bot.callback_query_handler(func=lambda call: call.data.startswith("lang_"))
 def select_language(call):
     user_id = call.from_user.id
@@ -355,11 +680,10 @@ def buy_premium(call):
     user_id = call.from_user.id
     language = user_languages.get(user_id, 'en')
 
-    # Ödeme bilgileri
     title = messages[language]['purchase_title']
     description = messages[language]['purchase_description']
-    price = 1  # Fiyat sadece XTR cinsinden ayarlanabilir
-    prices = [LabeledPrice(label=title, amount=price * 1000)]  # 1 birim için 100 ekleyin
+    price = 1
+    prices = [LabeledPrice(label=title, amount=price * 1000)]
 
     bot.send_invoice(
         chat_id=user_id,
@@ -381,9 +705,23 @@ def successful_payment_handler(message):
     language = user_languages.get(user_id, 'en')
     success_message = messages[language]['successful_payment']
 
-    # Premium üyeliği işaretleyin (örneğin bir veritabanında veya dosyada saklanabilir)
+    # Premium üyeliği kaydet
     with open("premium_users.txt", "a") as file:
         file.write(f"{user_id}\n")
+    
+    # Veritabanına da kaydet
+    try:
+        conn = sqlite3.connect('phone_bot.db')
+        c = conn.cursor()
+        premium_until = (datetime.now() + timedelta(days=30)).isoformat()
+        c.execute('''INSERT OR REPLACE INTO users 
+                    (user_id, language, is_premium, premium_until, join_date) 
+                    VALUES (?, ?, ?, ?, ?)''',
+                 (user_id, language, 1, premium_until, datetime.now().isoformat()))
+        conn.commit()
+        conn.close()
+    except:
+        pass
 
     bot.send_message(user_id, success_message)
 
@@ -417,57 +755,7 @@ def send_help(call):
 @bot.callback_query_handler(func=lambda call: call.data == "back_to_welcome")
 def back_to_welcome(call):
     language = user_languages.get(call.from_user.id, 'en')
-    welcome_text = messages[language]['welcome']
-
-    markup = types.InlineKeyboardMarkup()
-    settings_button = types.InlineKeyboardButton(messages[language]['settings_button'], callback_data="settings")
-    help_button = types.InlineKeyboardButton(messages[language]['help_button'], callback_data="help")
-    premium_button = types.InlineKeyboardButton(messages[language]['premium_button'], callback_data="buy_premium")
-    markup.add(settings_button, help_button)
-    markup.add(premium_button)
-
-    bot.edit_message_text(welcome_text, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-@bot.message_handler(func=lambda message: True)
-def handle_message(message):
-    user_id = message.from_user.id
-    language = user_languages.get(user_id, 'en')
-
-    phone_number_text = message.text
-    details = get_phone_number_details(phone_number_text)
-
-    if details:
-        message_text = (
-            f"{messages[language]['phone_info']}\n"
-            f"    ├🌍 <b>{messages[language]['country']}:</b> {details['country']}\n"
-            f"    ├📶 <b>{messages[language]['operator']}:</b> {details['operator']}\n"
-            f"    ├⏰ <b>{messages[language]['timezones']}:</b> {details['timezones']}\n"
-            f"    ├🔢 <b>{messages[language]['number_type']}:</b> {details['number_type']}\n"
-            f"    ├✅ <b>{messages[language]['valid_number']}:</b> {details['valid_number']}\n"
-            f"    ├📍 <b>{messages[language]['national_number']}:</b> {details['national_number']}\n"
-            f"    ├🗺 <b>{messages[language]['area_code']}:</b> {details['area_code']}\n"
-            f"    └📞 <b>{messages[language]['e164_format']}:</b> {details['e164_format']}\n\n"
-            f"{messages[language]['person_info']}\n"
-            f"    ├🔒 <b>{messages[language]['name']}:</b> <span class='tg-spoiler'>{messages[language]['premium_required']}</span>\n"
-            f"    ├🔒 <b>{messages[language]['surname']}:</b> <span class='tg-spoiler'>{messages[language]['premium_required']}</span>\n"
-            f"    ├🔒 <b>{messages[language]['birthplace']}:</b> <span class='tg-spoiler'>{messages[language]['premium_required']}</span>\n"
-            f"    ├🔒 <b>{messages[language]['birth_date']}:</b> <span class='tg-spoiler'>{messages[language]['premium_required']}</span>\n"
-            f"    ├🔒 <b>{messages[language]['age']}:</b> <span class='tg-spoiler'>{messages[language]['premium_required']}</span>\n"
-            f"    ├🔒 <b>{messages[language]['serial_no']}:</b> <span class='tg-spoiler'>{messages[language]['premium_required']}</span>\n"
-            f"    ├🔒 <b>{messages[language]['record_no']}:</b> <span class='tg-spoiler'>{messages[language]['premium_required']}</span>\n"
-            f"    ├🔒 <b>{messages[language]['mother_name']}:</b> <span class='tg-spoiler'>{messages[language]['premium_required']}</span>\n"
-            f"    ├🔒 <b>{messages[language]['mother_id']}:</b> <span class='tg-spoiler'>{messages[language]['premium_required']}</span>\n"
-            f"    ├🔒 <b>{messages[language]['father_name']}:</b> <span class='tg-spoiler'>{messages[language]['premium_required']}</span>\n"
-            f"    └🔒 <b>{messages[language]['father_id']}:</b> <span class='tg-spoiler'>{messages[language]['premium_required']}</span>\n\n"
-            f"{messages[language]['live_location_warning']}"
-        )
-        markup = types.InlineKeyboardMarkup()
-        location_button = types.InlineKeyboardButton(messages[language]['location_button'], callback_data="view_location")
-        markup.add(location_button)
-
-        bot.reply_to(message, message_text, parse_mode="HTML", reply_markup=markup)
-    else:
-        bot.reply_to(message, messages[language]['invalid_number'])
+    show_main_menu(call.message.chat.id, language)
 
 @bot.callback_query_handler(func=lambda call: call.data == "view_location")
 def location_access_warning(call):
@@ -485,7 +773,7 @@ def get_phone_number_details(number):
             'country': geocoder.description_for_number(phone_number, "en") or "Unknown",
             'operator': carrier.name_for_number(phone_number, "en") or "Unknown",
             'timezones': ", ".join(timezone.time_zones_for_number(phone_number)) or "Unknown",
-            'number_type': phonenumbers.number_type(phone_number),
+            'number_type': str(phonenumbers.number_type(phone_number)),
             'valid_number': phonenumbers.is_valid_number(phone_number),
             'national_number': phonenumbers.national_significant_number(phone_number),
             'area_code': phonenumbers.region_code_for_number(phone_number),
@@ -496,10 +784,43 @@ def get_phone_number_details(number):
     except NumberParseException:
         return None
 
+# Admin komutları
+@bot.message_handler(commands=['update'])
+def update_bot(message):
+    if message.from_user.id == BOT_OWNER_ID:
+        language = user_languages.get(message.from_user.id, 'en')
+        try:
+            result = subprocess.run(['git', 'pull'], capture_output=True, text=True)
+            if result.returncode == 0:
+                bot.reply_to(message, messages[language]['update_success'])
+                os.execv(sys.executable, [sys.executable] + sys.argv)
+            else:
+                bot.reply_to(message, f"{messages[language]['update_failed']}\nError: {result.stderr}")
+        except Exception as e:
+            bot.reply_to(message, f"{messages[language]['update_failed']}\nError: {str(e)}")
+    else:
+        language = user_languages.get(message.from_user.id, 'en')
+        bot.reply_to(message, messages[language]['update_no_access'])
 
+@bot.message_handler(commands=['prelist'])
+def send_premium_list(message):
+    if message.from_user.id == BOT_OWNER_ID:
+        try:
+            with open("premium_users.txt", "r") as file:
+                premium_users = file.readlines()
 
+            if premium_users:
+                premium_list = ''.join(premium_users).strip()
+                bot.send_message(message.chat.id, f"Premium Üyeler Listesi:\n{premium_list}")
+            else:
+                bot.send_message(message.chat.id, "Henüz premium üyeler yok.")
 
+        except FileNotFoundError:
+            bot.send_message(message.chat.id, "Premium üyeler listesi bulunamadı.")
+    else:
+        bot.send_message(message.chat.id, "Bu komutu sadece bot sahibi kullanabilir.")
 
+# Logo ve başlatma
 logo2 = '''
 88  dP 88 88b 88  dP""b8      dP"Yb  8888b.  88 88b 88
 88odP  88 88Yb88 dP   `"     dP   Yb  8I  Yb 88 88Yb88
@@ -508,8 +829,6 @@ logo2 = '''
 '''
 
 print('bot çalışıyor')
-
-import random
 
 logo = '''
 ⠛⠛⣿⣿⣿⣿⣿⡷⢶⣦⣶⣶⣤⣤⣤⣀⠀⠀⠀
@@ -542,7 +861,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
-
-
