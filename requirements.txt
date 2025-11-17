@@ -2,3 +2,4 @@ requests
 telebot
 phonenumbers
 python-dotenv
+Faker
