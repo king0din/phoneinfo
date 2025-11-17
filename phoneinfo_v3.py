@@ -1,3 +1,4 @@
+import os
 import time
 import requests
 import phonenumbers
@@ -5,9 +6,18 @@ from phonenumbers import geocoder, carrier, timezone, NumberParseException, Phon
 from telebot import TeleBot, types
 from telebot.types import LabeledPrice, PreCheckoutQuery
 from datetime import datetime, timedelta
+import subprocess
+from dotenv import load_dotenv
 
-TOKEN = "BOT_TOKENİNİZİ_BURAYA"
-PROVIDER_TOKEN = '' #sağlayıcı token
+# .env dosyasını yükle
+load_dotenv()
+
+TOKEN = os.getenv('BOT_TOKEN')
+PROVIDER_TOKEN = os.getenv('PROVIDER_TOKEN')
+
+if not TOKEN:
+    raise ValueError("BOT_TOKEN environment variable is required!")
+
 bot = TeleBot(TOKEN)
 
 # dil sözlüğü
@@ -58,7 +68,10 @@ messages = {
         'mother_name': "Anne Adı",
         'mother_id': "Anne T.C.",
         'father_name': "Baba Adı",
-        'father_id': "Baba T.C."
+        'father_id': "Baba T.C.",
+        'update_success': "✅ Bot başarıyla güncellendi!",
+        'update_failed': "❌ Güncelleme başarısız oldu.",
+        'update_no_access': "⛔ Bu komutu sadece bot sahibi kullanabilir."
     },
     'en': {
         'welcome_select': "Please select a language to use the bot:",
@@ -103,7 +116,10 @@ messages = {
         'mother_name': "Mother's Name",
         'mother_id': "Mother's ID",
         'father_name': "Father's Name",
-        'father_id': "Father's ID"
+        'father_id': "Father's ID",
+        'update_success': "✅ Bot updated successfully!",
+        'update_failed': "❌ Update failed.",
+        'update_no_access': "⛔ Only the bot owner can use this command."
     },
     'ar': {
         'welcome_select': "يرجى اختيار لغة لاستخدام البوت:",
@@ -148,7 +164,10 @@ messages = {
         'mother_name': "اسم الأم",
         'mother_id': "رقم هوية الأم",
         'father_name': "اسم الأب",
-        'father_id': "رقم هوية الأب"
+        'father_id': "رقم هوية الأب",
+        'update_success': "✅ تم تحديث البوت بنجاح!",
+        'update_failed': "❌ فشل التحديث.",
+        'update_no_access': "⛔ فقط مالك البوت يمكنه استخدام هذا الأمر."
     },
     'ru': {
         'welcome_select': "Пожалуйста, выберите язык для использования бота:",
@@ -193,7 +212,10 @@ messages = {
         'mother_name': "Имя Матери",
         'mother_id': "ID Матери",
         'father_name': "Имя Отца",
-        'father_id': "ID Отца"
+        'father_id': "ID Отца",
+        'update_success': "✅ Бот успешно обновлен!",
+        'update_failed': "❌ Обновление не удалось.",
+        'update_no_access': "⛔ Только владелец бота может использовать эту команду."
 
     },
     'hi': {
@@ -239,16 +261,36 @@ messages = {
         'mother_name': "माँ का नाम",
         'mother_id': "माँ का आईडी",
         'father_name': "पिता का नाम",
-        'father_id': "पिता का आईडी"
+        'father_id': "पिता का आईडी",
+        'update_success': "✅ बॉट सफलतापूर्वक अपडेट किया गया!",
+        'update_failed': "❌ अपडेट विफल रहा।",
+        'update_no_access': "⛔ केवल बॉट मालिक ही इस कमांड का उपयोग कर सकता है।"
     }
 }
 
-
 BOT_OWNER_ID = 1897795912 
+
+@bot.message_handler(commands=['update'])
+def update_bot(message):
+    if message.from_user.id == BOT_OWNER_ID:
+        language = user_languages.get(message.from_user.id, 'en')
+        try:
+            # Git'ten en son değişiklikleri çek
+            result = subprocess.run(['git', 'pull'], capture_output=True, text=True)
+            if result.returncode == 0:
+                bot.reply_to(message, messages[language]['update_success'])
+                # Botu yeniden başlat
+                os.execv(sys.executable, [sys.executable] + sys.argv)
+            else:
+                bot.reply_to(message, f"{messages[language]['update_failed']}\nError: {result.stderr}")
+        except Exception as e:
+            bot.reply_to(message, f"{messages[language]['update_failed']}\nError: {str(e)}")
+    else:
+        language = user_languages.get(message.from_user.id, 'en')
+        bot.reply_to(message, messages[language]['update_no_access'])
 
 @bot.message_handler(commands=['prelist'])
 def send_premium_list(message):
-    
     if message.from_user.id == BOT_OWNER_ID:
         try:
             # premium_users.txt dosyasını okuma ve listeleme
@@ -266,8 +308,6 @@ def send_premium_list(message):
             bot.send_message(message.chat.id, "Premium üyeler listesi bulunamadı.")
     else:
         bot.send_message(message.chat.id, "Bu komutu sadece bot sahibi kullanabilir.")
-
-
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -455,10 +495,6 @@ def get_phone_number_details(number):
     except NumberParseException:
         return None
 
-
-
-
-
 logo2 = '''
 88  dP 88 88b 88  dP""b8      dP"Yb  8888b.  88 88b 88
 88odP  88 88Yb88 dP   `"     dP   Yb  8I  Yb 88 88Yb88
@@ -466,10 +502,9 @@ logo2 = '''
 88  Yb 88 88  Y8  YboodP      YbodP  8888Y"  88 88  Y8
 '''
 
-
 print('bot çalışıyor')
 
-import requests, random
+import random
 
 logo = '''
 ⠛⠛⣿⣿⣿⣿⣿⡷⢶⣦⣶⣶⣤⣤⣤⣀⠀⠀⠀
@@ -492,10 +527,6 @@ colors = [
 random_color = random.choice(colors)
 print(random_color + logo + logo2)
 
-
-
-
-
 def main():
     while True:
         try:
@@ -504,12 +535,5 @@ def main():
             print(f"Hata oluştu: {e}")
             time.sleep(15)
 
-
 if __name__ == '__main__':
     main()
-
-bot.polling()
-
-
-
-
