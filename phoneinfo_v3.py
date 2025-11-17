@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 import subprocess
 from dotenv import load_dotenv
 
-# .env dosyasını yükle
+
 load_dotenv()
 
 TOKEN = os.getenv('BOT_TOKEN')
@@ -537,3 +537,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
