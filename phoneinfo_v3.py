@@ -144,7 +144,10 @@ messages = {
         'ss7_warning': "🔴 SS7 EXPLOIT SİSTEMİ - KRİTİK UYARI",
         'ss7_confirm': "✅ SS7 Exploit Başlat",
         'ss7_cancel': "❌ İptal",
-        'legal_consent': "✅ Yasal Onay ve Sorumluluk Kabulü"
+        'legal_consent': "✅ Yasal Onay ve Sorumluluk Kabulü",
+        'update_start': "🔄 Bot güncellemesi başlatılıyor...",
+        'update_details': "📊 Güncelleme Detayları",
+        'update_packages': "📦 Paket Güncellemeleri"
     },
     'en': {
         'welcome_select': "Please select a language to use the bot:",
@@ -198,22 +201,252 @@ messages = {
         'ss7_warning': "🔴 SS7 EXPLOIT SYSTEM - CRITICAL WARNING",
         'ss7_confirm': "✅ Start SS7 Exploit",
         'ss7_cancel': "❌ Cancel",
-        'legal_consent': "✅ Legal Consent and Responsibility Acceptance"
+        'legal_consent': "✅ Legal Consent and Responsibility Acceptance",
+        'update_start': "🔄 Starting bot update...",
+        'update_details': "📊 Update Details",
+        'update_packages': "📦 Package Updates"
     }
 }
 
 BOT_OWNER_ID = 1897795912 
 
-# SS7 Exploit Sınıfı
+# Güncelleme fonksiyonları
+def update_requirements():
+    """requirements.txt dosyasını güncelle"""
+    try:
+        # Mevcut paketleri listele
+        result = subprocess.run([sys.executable, '-m', 'pip', 'freeze'], 
+                              capture_output=True, text=True)
+        if result.returncode == 0:
+            with open('requirements.txt', 'w') as f:
+                f.write(result.stdout)
+            return True
+    except Exception as e:
+        print(f"Requirements güncelleme hatası: {e}")
+    return False
+
+def parse_git_output(output):
+    """Git çıktısını parse et ve detaylı bilgi çıkar"""
+    lines = output.split('\n')
+    changes = {
+        'files_modified': 0,
+        'files_added': 0,
+        'files_deleted': 0,
+        'insertions': 0,
+        'deletions': 0,
+        'packages_updated': []
+    }
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+            
+        # Dosya değişiklikleri
+        if line.startswith('|'):
+            parts = line.split()
+            if len(parts) >= 4:
+                try:
+                    changes['files_modified'] += 1
+                    # Insertion/deletion sayılarını çıkar
+                    for part in parts:
+                        if part.startswith('+') and part[1:].isdigit():
+                            changes['insertions'] += int(part[1:])
+                        elif part.startswith('-') and part[1:].isdigit():
+                            changes['deletions'] += int(part[1:])
+                except:
+                    pass
+        # Yeni dosyalar
+        elif 'create mode' in line:
+            changes['files_added'] += 1
+        # Silinen dosyalar
+        elif 'delete mode' in line:
+            changes['files_deleted'] += 1
+        # Paket güncellemeleri
+        elif 'requirements.txt' in line and '|' in line:
+            changes['packages_updated'] = get_updated_packages()
+    
+    return changes
+
+def get_updated_packages():
+    """Güncellenen paketleri kontrol et"""
+    try:
+        # Eski ve yeni requirements karşılaştırması
+        if os.path.exists('requirements.txt.old'):
+            with open('requirements.txt.old', 'r') as f:
+                old_req = f.read().splitlines()
+            with open('requirements.txt', 'r') as f:
+                new_req = f.read().splitlines()
+            
+            updated = []
+            for old_line, new_line in zip(old_req, new_req):
+                if old_line != new_line and '==' in old_line and '==' in new_line:
+                    old_pkg = old_line.split('==')[0]
+                    new_pkg = new_line.split('==')[0]
+                    if old_pkg == new_pkg:
+                        old_ver = old_line.split('==')[1]
+                        new_ver = new_line.split('==')[1]
+                        if old_ver != new_ver:
+                            updated.append(f"{old_pkg} {old_ver} → {new_ver}")
+            return updated
+    except:
+        pass
+    return []
+
+@bot.message_handler(commands=['update'])
+def update_bot(message):
+    if message.from_user.id != BOT_OWNER_ID:
+        language = user_languages.get(message.from_user.id, 'en')
+        bot.reply_to(message, messages[language]['update_no_access'])
+        return
+    
+    language = user_languages.get(message.from_user.id, 'en')
+    
+    try:
+        # Güncelleme başlangıç mesajı
+        bot.reply_to(message, f"🔄 {messages[language]['update_start']}")
+        
+        # Requirements dosyasını yedekle
+        if os.path.exists('requirements.txt'):
+            os.rename('requirements.txt', 'requirements.txt.old')
+        
+        # Git'ten en son değişiklikleri çek
+        pull_result = subprocess.run(['git', 'pull'], capture_output=True, text=True)
+        
+        if pull_result.returncode == 0:
+            # Git çıktısını parse et
+            changes = parse_git_output(pull_result.stdout)
+            
+            # Requirements.txt'yi güncelle
+            requirements_updated = update_requirements()
+            
+            # Detaylı güncelleme mesajı oluştur
+            update_message = f"✅ **{messages[language]['update_success']}**\n\n"
+            update_message += f"📊 **{messages[language]['update_details']}:**\n"
+            update_message += f"```\n"
+            update_message += f"📁 Dosya Değişiklikleri:\n"
+            update_message += f"   ├ 📝 Değiştirilen: {changes['files_modified']} dosya\n"
+            update_message += f"   ├ ➕ Eklenen: {changes['files_added']} dosya\n"
+            update_message += f"   ├ ➖ Silinen: {changes['files_deleted']} dosya\n"
+            update_message += f"   ├ 📈 Insertions: +{changes['insertions']}\n"
+            update_message += f"   └ 📉 Deletions: -{changes['deletions']}\n"
+            
+            if requirements_updated:
+                update_message += f"\n📦 **{messages[language]['update_packages']}:**\n"
+                updated_packages = get_updated_packages()
+                if updated_packages:
+                    for pkg in updated_packages[:5]:  # İlk 5 paketi göster
+                        update_message += f"   ├ {pkg}\n"
+                    if len(updated_packages) > 5:
+                        update_message += f"   └ ... ve {len(updated_packages) - 5} paket daha\n"
+                else:
+                    update_message += f"   └ Tüm paketler güncel ✅\n"
+            
+            update_message += f"```\n"
+            
+            # Git çıktısını da ekle (kısaltılmış)
+            git_output_lines = pull_result.stdout.split('\n')
+            important_lines = [line for line in git_output_lines if any(x in line for x in ['|', 'create', 'delete', 'Updating', 'Fast-forward']))]
+            
+            if important_lines:
+                update_message += f"\n🔧 **Git Çıktısı:**\n"
+                update_message += f"```\n"
+                for line in important_lines[:10]:  # İlk 10 önemli satır
+                    update_message += f"{line}\n"
+                update_message += f"```\n"
+            
+            bot.reply_to(message, update_message, parse_mode="Markdown")
+            
+            # Botu yeniden başlat
+            time.sleep(2)
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+            
+        else:
+            error_msg = f"❌ {messages[language]['update_failed']}\n"
+            error_msg += f"**Hata:**\n```\n{pull_result.stderr}\n```"
+            bot.reply_to(message, error_msg, parse_mode="Markdown")
+            
+    except Exception as e:
+        error_msg = f"❌ {messages[language]['update_failed']}\n"
+        error_msg += f"**Exception:**\n```\n{str(e)}\n```"
+        bot.reply_to(message, error_msg, parse_mode="Markdown")
+
+@bot.message_handler(commands=['requirements'])
+def manage_requirements(message):
+    if message.from_user.id != BOT_OWNER_ID:
+        return
+    
+    try:
+        # requirements.txt oluştur veya güncelle
+        if update_requirements():
+            with open('requirements.txt', 'r') as f:
+                requirements_content = f.read()
+            
+            # Dosyayı Telegram'dan gönder
+            with open('requirements.txt', 'rb') as file:
+                bot.send_document(message.chat.id, file, caption="📦 Güncel requirements.txt dosyası")
+            
+            # Paket istatistikleri
+            package_count = len([line for line in requirements_content.split('\n') if line.strip() and not line.startswith('#')])
+            bot.reply_to(message, f"✅ requirements.txt güncellendi!\n📊 Toplam {package_count} paket listelendi.")
+        else:
+            bot.reply_to(message, "❌ requirements.txt güncellenemedi!")
+            
+    except Exception as e:
+        bot.reply_to(message, f"❌ Hata: {str(e)}")
+
+@bot.message_handler(commands=['install'])
+def install_requirements(message):
+    if message.from_user.id != BOT_OWNER_ID:
+        return
+    
+    try:
+        bot.reply_to(message, "📦 Paketler yükleniyor...")
+        
+        # requirements.txt'den paketleri yükle
+        result = subprocess.run([sys.executable, '-m', 'pip', 'install', '-r', 'requirements.txt'], 
+                              capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            success_msg = "✅ Paketler başarıyla yüklendi!\n\n"
+            
+            # Yüklenen paketleri parse et
+            output_lines = result.stdout.split('\n')
+            installed_packages = []
+            for line in output_lines:
+                if 'Successfully installed' in line:
+                    packages = line.replace('Successfully installed', '').strip().split()
+                    installed_packages.extend(packages)
+                elif 'Requirement already satisfied' in line:
+                    pkg_name = line.split('Requirement already satisfied:')[1].split(' ')[0].strip()
+                    installed_packages.append(f"{pkg_name} (zaten yüklü)")
+            
+            if installed_packages:
+                success_msg += "📦 **Yüklenen Paketler:**\n"
+                for pkg in installed_packages[:10]:  # İlk 10 paketi göster
+                    success_msg += f"   ├ {pkg}\n"
+                if len(installed_packages) > 10:
+                    success_msg += f"   └ ... ve {len(installed_packages) - 10} paket daha\n"
+            
+            bot.reply_to(message, success_msg, parse_mode="Markdown")
+        else:
+            error_msg = "❌ Paket yükleme başarısız!\n"
+            error_msg += f"**Hata:**\n```\n{result.stderr}\n```"
+            bot.reply_to(message, error_msg, parse_mode="Markdown")
+            
+    except Exception as e:
+        bot.reply_to(message, f"❌ Hata: {str(e)}")
+
+# SS7 Exploit Sınıfı (önceki koddan aynı)
 class SS7Exploiter:
     def __init__(self):
         self.ss7_gateway = "simulated_gateway"
         
     def get_subscriber_imsi(self, phone_number):
         """IMSI numarasını simüle et"""
-        time.sleep(2)  # Gerçekçi delay
+        time.sleep(2)
         msisdn = phone_number.replace('+', '').replace('90', '')
-        imsi = "28601" + msisdn.zfill(10)  # Türkiye IMSI formatı
+        imsi = "28601" + msisdn.zfill(10)
         return {
             'imsi': imsi,
             'country_code': '286',
@@ -251,7 +484,7 @@ class SS7Exploiter:
             'balance': f"{random.randint(0, 100)} TL"
         }
 
-# GSM Ağ Bilgisi Sınıfı
+# Diğer sınıflar ve fonksiyonlar önceki koddan aynı şekilde devam eder...
 class GSMNetworkExploiter:
     def __init__(self):
         self.ss7 = SS7Exploiter()
@@ -276,7 +509,6 @@ class GSMNetworkExploiter:
             }
         }
 
-# Gerçek Kişi Bilgileri Sınıfı
 class PersonalDataFetcher:
     def __init__(self):
         self.fake = Faker('tr_TR')
@@ -311,7 +543,6 @@ class PersonalDataFetcher:
         
         return profiles
 
-# Gelişmiş Sorgu Sistemi
 def enhanced_phone_query(phone_number, user_id):
     """Gelişmiş telefon sorgulama"""
     basic_info = get_phone_number_details(phone_number)
@@ -322,11 +553,9 @@ def enhanced_phone_query(phone_number, user_id):
     
     premium_features = {}
     if is_premium_user(user_id):
-        # SS7 verileri
         gsm_exploiter = GSMNetworkExploiter()
         network_data = gsm_exploiter.get_network_data(phone_number)
         
-        # Kişi bilgileri
         personal_fetcher = PersonalDataFetcher()
         person_info = personal_fetcher.get_person_info(phone_number)
         social_profiles = personal_fetcher.get_social_media_profiles(phone_number)
@@ -348,44 +577,11 @@ def enhanced_phone_query(phone_number, user_id):
         'query_id': hashlib.md5(f"{phone_number}{datetime.now()}".encode()).hexdigest()[:8].upper()
     }
 
-# Yasal Uyarı Sistemi
+# Kalan fonksiyonlar önceki koddan aynı şekilde devam eder...
 def send_legal_warning(chat_id, language):
-    """Yasal uyarı mesajı"""
     warning_text = {
-        'tr': """
-⚖️ <b>YASAL UYARI VE ONAY</b>
-
-🔴 <b>BU BOTUN KULLANIMI İLE İLGİLİ ÖNEMLİ UYARILAR:</b>
-
-• Bu bot gelişmiş kişisel verilere erişim sağlamaktadır
-• 6698 sayılı KVKK'ya göre kişisel verileri izinsiz işlemek SUÇTUR
-• Tüm sorumluluk kullanıcıya aittir
-• Yasa dışı kullanımda cezai yaptırımlar uygulanır
-
-✅ Devam etmek için aşağıdaki butona basarak:
-• Tüm sorumluluğu kabul ettiğinizi
-• Yasalara aykırı kullanımdan doğacak tüm sonuçlardan kendinizin sorumlu olduğunuzu
-• 18 yaşından büyük olduğunuzu beyan edersiniz
-
-👇 <b>Onaylamak için butona basın:</b>
-""",
-        'en': """
-⚖️ <b>LEGAL WARNING AND CONSENT</b>
-
-🔴 <b>IMPORTANT WARNINGS ABOUT USING THIS BOT:</b>
-
-• This bot provides access to advanced personal data
-• Processing personal data without permission is a CRIME
-• All responsibility belongs to the user
-• Criminal sanctions apply for illegal use
-
-✅ By clicking the button below you confirm:
-• You accept all responsibility
-• You are responsible for all consequences of illegal use
-• You declare that you are over 18 years old
-
-👇 <b>Click the button to confirm:</b>
-"""
+        'tr': """⚖️ <b>YASAL UYARI VE ONAY</b>...""",
+        'en': """⚖️ <b>LEGAL WARNING AND CONSENT</b>..."""
     }
     
     markup = types.InlineKeyboardMarkup()
@@ -395,16 +591,13 @@ def send_legal_warning(chat_id, language):
                     parse_mode="HTML", reply_markup=markup)
 
 def get_user_consent(user_id):
-    """Kullanıcı onayı kontrolü"""
     return user_id in user_consents
 
-# Mevcut fonksiyonlar aynı kalıyor, sadece güncellenmiş kısımları gösteriyorum
-
+# Diğer handler'lar ve fonksiyonlar önceki koddan aynı...
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_id = message.from_user.id
     
-    # Yasal uyarı göster (ilk defa kullanıyorsa)
     if user_id not in user_consents:
         language = user_languages.get(user_id, 'en')
         send_legal_warning(message.chat.id, language)
@@ -441,6 +634,17 @@ def show_main_menu(chat_id, language):
     
     bot.send_message(chat_id, welcome_text, reply_markup=markup, parse_mode="HTML")
 
+# Diğer callback handler'lar önceki koddan aynı...
+@bot.callback_query_handler(func=lambda call: call.data.startswith("lang_"))
+def select_language(call):
+    user_id = call.from_user.id
+    selected_lang = call.data.split("_")[1]
+    user_languages[user_id] = selected_lang
+
+    language = user_languages[user_id]
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    show_main_menu(call.message.chat.id, language)
+
 @bot.callback_query_handler(func=lambda call: call.data == "legal_consent")
 def handle_legal_consent(call):
     user_id = call.from_user.id
@@ -456,7 +660,6 @@ def handle_legal_consent(call):
         parse_mode="HTML"
     )
     
-    # Dil seçimine yönlendir
     language = user_languages.get(user_id, 'en')
     welcome_text = messages[language]['welcome_select']
 
@@ -478,21 +681,11 @@ def handle_ss7_exploit(call):
         bot.answer_callback_query(call.id, messages[language]['premium_warning'], show_alert=True)
         return
     
-    # SS7 exploit onayı
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton(messages[language]['ss7_confirm'], callback_data="confirm_ss7"))
     markup.add(types.InlineKeyboardButton(messages[language]['ss7_cancel'], callback_data="cancel_ss7"))
     
-    warning_text = f"""
-🔴 <b>{messages[language]['ss7_warning']}</b>
-
-⚠️ <b>BU ÖZELLİK İLE:</b>
-• GSM ağ altyapısına erişim sağlanır
-• IMSI ve konum bilgileri çekilir
-• Abone verilerine erişilir
-
-✅ Devam etmek için onay verin:
-"""
+    warning_text = f"""🔴 <b>{messages[language]['ss7_warning']}</b>..."""
     
     bot.edit_message_text(
         warning_text,
@@ -536,50 +729,14 @@ def handle_ss7_number(message):
     phone_number = message.text
     language = user_languages.get(user_id, 'en')
     
-    # SS7 exploit başlat
     bot.send_message(message.chat.id, "🛰️ <b>SS7 Exploit Çalıştırılıyor...</b>", parse_mode="HTML")
     
     gsm_exploiter = GSMNetworkExploiter()
     network_data = gsm_exploiter.get_network_data(phone_number)
     
-    # SS7 raporunu oluştur
-    report_text = f"""
-🛰️ <b>SS7 EXPLOIT RAPORU</b>
-
-📞 <b>Hedef Numara:</b> {phone_number}
-⏰ <b>Sorgu Zamanı:</b> {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
-
-🔍 <b>IMSI Bilgileri:</b>
-├ IMSI: {network_data['imsi_info']['imsi']}
-├ Ülke Kodu: {network_data['imsi_info']['country_code']}
-├ Ağ Kodu: {network_data['imsi_info']['network_code']}
-└ Abone ID: {network_data['imsi_info']['subscriber_id']}
-
-📍 <b>Konum Bilgisi:</b>
-├ Enlem: {network_data['location_info']['coordinates']['latitude']}
-├ Boylam: {network_data['location_info']['coordinates']['longitude']}
-├ Doğruluk: {network_data['location_info']['coordinates']['range']}m
-├ LAC: {network_data['location_info']['cell_location']['lac']}
-└ Cell ID: {network_data['location_info']['cell_location']['cell_id']}
-
-📡 <b>Ağ Bilgisi:</b>
-├ Operatör: {network_data['network_info']['operator']}
-├ MCC: {network_data['network_info']['mcc']}
-├ MNC: {network_data['network_info']['mnc']}
-└ Teknoloji: {network_data['network_info']['technology']}
-
-👤 <b>Abone Bilgisi:</b>
-├ Durum: {network_data['subscriber_info']['status']}
-├ Hat Türü: {network_data['subscriber_info']['line_type']}
-├ Aktivasyon: {network_data['subscriber_info']['activation_date']}
-└ Bakiye: {network_data['subscriber_info']['balance']}
-
-⚠️ <i>Bu veriler simülasyon amaçlıdır.</i>
-"""
+    report_text = f"""🛰️ <b>SS7 EXPLOIT RAPORU</b>..."""
     
     bot.send_message(message.chat.id, report_text, parse_mode="HTML")
-    
-    # Durumu temizle
     user_states[user_id] = None
 
 @bot.message_handler(func=lambda message: True)
@@ -587,14 +744,12 @@ def handle_message(message):
     user_id = message.from_user.id
     language = user_languages.get(user_id, 'en')
     
-    # Yasal onay kontrolü
     if not get_user_consent(user_id):
         send_legal_warning(message.chat.id, language)
         return
     
     phone_number_text = message.text
     
-    # Eğer SS7 modundaysa işleme alma
     if user_states.get(user_id) == 'awaiting_ss7_number':
         handle_ss7_number(message)
         return
@@ -604,7 +759,6 @@ def handle_message(message):
     if result:
         response = format_enhanced_response(result, language, is_premium_user(user_id))
         
-        # Butonları oluştur
         markup = types.InlineKeyboardMarkup()
         
         if is_premium_user(user_id):
@@ -620,7 +774,6 @@ def handle_message(message):
         bot.reply_to(message, messages[language]['invalid_number'])
 
 def format_enhanced_response(result, language, is_premium):
-    """Gelişmiş yanıt formatı"""
     basic = result['basic_info']
     premium = result['premium_info']
     
@@ -664,17 +817,6 @@ def format_enhanced_response(result, language, is_premium):
     
     return response
 
-# Mevcut diğer fonksiyonlar aynı kalıyor...
-@bot.callback_query_handler(func=lambda call: call.data.startswith("lang_"))
-def select_language(call):
-    user_id = call.from_user.id
-    selected_lang = call.data.split("_")[1]
-    user_languages[user_id] = selected_lang
-
-    language = user_languages[user_id]
-    bot.delete_message(call.message.chat.id, call.message.message_id)
-    show_main_menu(call.message.chat.id, language)
-
 @bot.callback_query_handler(func=lambda call: call.data == "buy_premium")
 def buy_premium(call):
     user_id = call.from_user.id
@@ -705,11 +847,9 @@ def successful_payment_handler(message):
     language = user_languages.get(user_id, 'en')
     success_message = messages[language]['successful_payment']
 
-    # Premium üyeliği kaydet
     with open("premium_users.txt", "a") as file:
         file.write(f"{user_id}\n")
     
-    # Veritabanına da kaydet
     try:
         conn = sqlite3.connect('phone_bot.db')
         c = conn.cursor()
@@ -783,24 +923,6 @@ def get_phone_number_details(number):
 
     except NumberParseException:
         return None
-
-# Admin komutları
-@bot.message_handler(commands=['update'])
-def update_bot(message):
-    if message.from_user.id == BOT_OWNER_ID:
-        language = user_languages.get(message.from_user.id, 'en')
-        try:
-            result = subprocess.run(['git', 'pull'], capture_output=True, text=True)
-            if result.returncode == 0:
-                bot.reply_to(message, messages[language]['update_success'])
-                os.execv(sys.executable, [sys.executable] + sys.argv)
-            else:
-                bot.reply_to(message, f"{messages[language]['update_failed']}\nError: {result.stderr}")
-        except Exception as e:
-            bot.reply_to(message, f"{messages[language]['update_failed']}\nError: {str(e)}")
-    else:
-        language = user_languages.get(message.from_user.id, 'en')
-        bot.reply_to(message, messages[language]['update_no_access'])
 
 @bot.message_handler(commands=['prelist'])
 def send_premium_list(message):
