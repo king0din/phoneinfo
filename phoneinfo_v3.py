@@ -7,6 +7,7 @@ from telebot import TeleBot, types
 from telebot.types import LabeledPrice, PreCheckoutQuery
 from datetime import datetime, timedelta
 import subprocess
+import sys
 from dotenv import load_dotenv
 
 
@@ -537,5 +538,6 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
 
