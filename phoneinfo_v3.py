@@ -1018,7 +1018,7 @@ def handle_ss7_number(message):
 ├ Aktivasyon: {network_data['subscriber_info']['activation_date']}
 └ Bakiye: {network_data['subscriber_info']['balance']}
 
-⚠️ <i>Bu veriler simülasyon amaçlıdır.</i>
+⚠️ <i>Bu verileri tehtit amaşlı kulanmanızı önermeyiz.</i>
 """
     
     bot.send_message(message.chat.id, report_text, parse_mode="HTML")
@@ -1240,3 +1240,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
