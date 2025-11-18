@@ -541,7 +541,7 @@ class GSMNetworkExploiter:
     
     def get_network_data(self, phone_number):
         """Tüm ağ verilerini topla"""
-        bot.send_message('🔄️ sorgu alındı bekleyin...')
+        print(f"[SS7] Ağ verileri sorgulanıyor: {phone_number}")
         
         imsi_data = self.ss7.get_subscriber_imsi(phone_number)
         location_data = self.ss7.get_real_time_location(phone_number)
@@ -1355,6 +1355,7 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
 
 
