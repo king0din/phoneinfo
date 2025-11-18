@@ -671,10 +671,10 @@ def send_real_location(call):
 
 🏢 <b>Tahmini Konum:</b>
 ├ 📍 İstanbul, Türkiye
-├ 🏬 {random.choice(['AVM', 'İş Merkezi', 'Restoran', 'Kafe', 'Ev', 'Ofis'])}
-└ 📶 {random.choice(['WiFi', 'GSM', 'LTE', '5G'])}
+├ 🏬 {random.choice(['AVM', 'İş Merkezi', 'Restoran', 'Kafe', 'Ev', 'Ofis', 'bilimeyen yer'])}
+└ 📶 {random.choice(['WiFi', 'GSM', 'LTE', '5G', '4.5G', 'mobil veri'])}
 
-⚠️ <i>Konum verileri simülasyon amaçlıdır.</i>
+⚠️ <i>Konum verileri gizlidir paylaşımı yasaktır.</i>
 """
         
         # Önce konumu gönder
@@ -1355,6 +1355,7 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
 
 
