@@ -629,6 +629,128 @@ def enhanced_phone_query(phone_number, user_id):
         'query_id': hashlib.md5(f"{phone_number}{datetime.now()}".encode()).hexdigest()[:8].upper()
     }
 
+# YENİ KONUM FONKSİYONLARI
+@bot.callback_query_handler(func=lambda call: call.data.startswith("location_"))
+def send_real_location(call):
+    user_id = call.from_user.id
+    language = user_languages.get(user_id, 'en')
+    
+    if not is_premium_user(user_id):
+        bot.answer_callback_query(call.id, messages[language]['premium_warning'], show_alert=True)
+        return
+    
+    try:
+        # Rastgele İstanbul koordinatları oluştur
+        istanbul_coordinates = [
+            (41.0082, 28.9784),   # Sultanahmet
+            (41.0406, 28.9861),   # Taksim
+            (41.0151, 28.9795),   # Beyoğlu
+            (41.0553, 29.0214),   # Beşiktaş
+            (41.0765, 29.0527),   # Sarıyer
+            (40.9923, 29.1244),   # Kadıköy
+            (40.9615, 29.1135),   # Maltepe
+            (41.0053, 28.9070),   # Bakırköy
+            (41.0930, 28.8020),   # Arnavutköy
+            (41.1821, 28.8814)    # Eyüpsultan
+        ]
+        
+        lat, lon = random.choice(istanbul_coordinates)
+        
+        # Küçük rastgele offset ekle (daha gerçekçi olsun)
+        lat += random.uniform(-0.01, 0.01)
+        lon += random.uniform(-0.01, 0.01)
+        
+        # Konum bilgisi mesajı
+        location_info = f"""
+📍 <b>Gerçek Zamanlı Konum Bilgisi</b>
+
+📱 <b>Hedef Cihaz:</b> Akıllı Telefon
+📶 <b>Sinyal Gücü:</b> %{random.randint(65, 95)}
+🕒 <b>Son Güncelleme:</b> {datetime.now().strftime('%H:%M:%S')}
+🎯 <b>Doğruluk:</b> {random.randint(10, 50)} metre
+
+🏢 <b>Tahmini Konum:</b>
+├ 📍 İstanbul, Türkiye
+├ 🏬 {random.choice(['AVM', 'İş Merkezi', 'Restoran', 'Kafe', 'Ev', 'Ofis'])}
+└ 📶 {random.choice(['WiFi', 'GSM', 'LTE', '5G'])}
+
+⚠️ <i>Konum verileri simülasyon amaçlıdır.</i>
+"""
+        
+        # Önce konumu gönder
+        bot.send_location(
+            chat_id=call.message.chat.id,
+            latitude=lat,
+            longitude=lon,
+            live_period=3600  # 1 saat canlı konum
+        )
+        
+        # Sonra konum bilgilerini gönder
+        bot.send_message(
+            call.message.chat.id,
+            location_info,
+            parse_mode="HTML"
+        )
+        
+    except Exception as e:
+        bot.answer_callback_query(call.id, f"❌ Konum gönderilemedi: {str(e)}", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("details_"))
+def send_detailed_info(call):
+    user_id = call.from_user.id
+    language = user_languages.get(user_id, 'en')
+    
+    if not is_premium_user(user_id):
+        bot.answer_callback_query(call.id, messages[language]['premium_warning'], show_alert=True)
+        return
+    
+    try:
+        # Detaylı kişi bilgileri
+        personal_fetcher = PersonalDataFetcher()
+        person_info = personal_fetcher.get_person_info("+905555555555")
+        social_profiles = personal_fetcher.get_social_media_profiles("+905555555555")
+        
+        details_text = f"""
+👤 <b>Detaylı Kişi Bilgileri</b>
+
+📋 <b>Kimlik Bilgileri:</b>
+├ {messages[language]['name']}: {person_info['name']}
+├ {messages[language]['surname']}: {person_info['surname']}
+├ Doğum Tarihi: {person_info['birth_date']}
+├ Yaş: {person_info['age']}
+└ Doğum Yeri: {person_info['birthplace']}
+
+🏠 <b>Kayıt Bilgileri:</b>
+├ TC Kimlik: {person_info['tc_identity']}
+├ Nüfuz İl: {person_info['registration_city']}
+└ Medeni Hal: {random.choice(['Bekar', 'Evli'])}
+
+👨‍👩‍👧‍👦 <b>Aile Bilgileri:</b>
+├ Anne Adı: {person_info['mother_name']}
+└ Baba Adı: {person_info['father_name']}
+
+📱 <b>Sosyal Medya Profilleri:</b>
+"""
+        
+        for platform, data in social_profiles.items():
+            details_text += f"├ {platform}: {data['username']}\n"
+            details_text += f"│ └ Son Giriş: {data['last_seen']}\n"
+        
+        details_text += f"""
+📊 <b>Veri Güvenilirliği:</b> %{random.randint(85, 98)}
+
+⚠️ <i>Bu bilgiler simülasyon amaçlıdır.</i>
+"""
+        
+        bot.send_message(
+            call.message.chat.id,
+            details_text,
+            parse_mode="HTML"
+        )
+        
+    except Exception as e:
+        bot.answer_callback_query(call.id, f"❌ Detaylar gönderilemedi: {str(e)}", show_alert=True)
+
 # Yasal Uyarı Sistemi
 def send_legal_warning(chat_id, language):
     warning_text = {
@@ -1018,46 +1140,13 @@ def handle_ss7_number(message):
 ├ Aktivasyon: {network_data['subscriber_info']['activation_date']}
 └ Bakiye: {network_data['subscriber_info']['balance']}
 
-⚠️ <i>Bu verileri tehtit amaşlı kulanmanızı önermeyiz.</i>
+⚠️ <i>Bu veriler simülasyon amaçlıdır.</i>
 """
     
     bot.send_message(message.chat.id, report_text, parse_mode="HTML")
     user_states[user_id] = None
 
-@bot.message_handler(func=lambda message: True)
-def handle_message(message):
-    user_id = message.from_user.id
-    language = user_languages.get(user_id, 'en')
-    
-    if not get_user_consent(user_id):
-        send_legal_warning(message.chat.id, language)
-        return
-    
-    phone_number_text = message.text
-    
-    if user_states.get(user_id) == 'awaiting_ss7_number':
-        handle_ss7_number(message)
-        return
-    
-    result = enhanced_phone_query(phone_number_text, user_id)
-    
-    if result:
-        response = format_enhanced_response(result, language, is_premium_user(user_id))
-        
-        markup = types.InlineKeyboardMarkup()
-        
-        if is_premium_user(user_id):
-            if result['premium_info']:
-                markup.add(types.InlineKeyboardButton("👤 Detaylı Kişi Bilgileri", callback_data=f"details_{result['query_id']}"))
-                markup.add(types.InlineKeyboardButton("📍 Gelişmiş Konum", callback_data=f"location_{result['query_id']}"))
-                markup.add(types.InlineKeyboardButton("🛰️ SS7 Exploit", callback_data="ss7_exploit"))
-        else:
-            markup.add(types.InlineKeyboardButton(messages[language]['premium_button'], callback_data="buy_premium"))
-        
-        bot.reply_to(message, response, parse_mode="HTML", reply_markup=markup)
-    else:
-        bot.reply_to(message, messages[language]['invalid_number'])
-
+# GÜNCELLENMİŞ FORMAT FONKSİYONU
 def format_enhanced_response(result, language, is_premium):
     basic = result['basic_info']
     premium = result['premium_info']
@@ -1079,15 +1168,15 @@ def format_enhanced_response(result, language, is_premium):
         response += f"    ├🔓 <b>{messages[language]['birthplace']}:</b> {premium['person_info']['birthplace']}\n"
         response += f"    ├🔓 <b>{messages[language]['birth_date']}:</b> {premium['person_info']['birth_date']}\n"
         response += f"    ├🔓 <b>{messages[language]['age']}:</b> {premium['person_info']['age']}\n"
-        response += f"    ├🔓 <b>{messages[language]['mother_name']}:</b> {premium['person_info']['mother_name']}\n"
-        response += f"    └🔓 <b>{messages[language]['father_name']}:</b> {premium['person_info']['father_name']}\n\n"
         
-        response += "📱 <b>Sosyal Medya Profilleri:</b>\n"
-        for platform, data in premium['social_profiles'].items():
-            response += f"    ├{platform}: {data['username']} ({data['profile_status']})\n"
-        response += f"    └ Son Görülme: {list(premium['social_profiles'].values())[0]['last_seen']}\n\n"
+        # Premium butonları
+        markup = types.InlineKeyboardMarkup()
+        markup.add(
+            types.InlineKeyboardButton("👤 Detaylı Kişi Bilgileri", callback_data=f"details_{result['query_id']}"),
+            types.InlineKeyboardButton("📍 Canlı Konum", callback_data=f"location_{result['query_id']}")
+        )
+        markup.add(types.InlineKeyboardButton("🛰️ SS7 Exploit", callback_data="ss7_exploit"))
         
-        response += f"📊 <b>Veri Güvenilirliği:</b> {premium['data_confidence']}\n"
     else:
         response += f"{messages[language]['person_info']}\n"
         response += f"    ├🔒 <b>{messages[language]['name']}:</b> <span class='tg-spoiler'>{messages[language]['premium_required']}</span>\n"
@@ -1095,12 +1184,38 @@ def format_enhanced_response(result, language, is_premium):
         response += f"    ├🔒 <b>{messages[language]['birthplace']}:</b> <span class='tg-spoiler'>{messages[language]['premium_required']}</span>\n"
         response += f"    ├🔒 <b>{messages[language]['birth_date']}:</b> <span class='tg-spoiler'>{messages[language]['premium_required']}</span>\n"
         response += f"    ├🔒 <b>{messages[language]['age']}:</b> <span class='tg-spoiler'>{messages[language]['premium_required']}</span>\n"
-        response += f"    ├🔒 <b>{messages[language]['mother_name']}:</b> <span class='tg-spoiler'>{messages[language]['premium_required']}</span>\n"
-        response += f"    └🔒 <b>{messages[language]['father_name']}:</b> <span class='tg-spoiler'>{messages[language]['premium_required']}</span>\n\n"
         
-        response += f"{messages[language]['live_location_warning']}"
+        # Premium satın alma butonu
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton(messages[language]['premium_button'], callback_data="buy_premium"))
+        
+        response += f"\n{messages[language]['live_location_warning']}"
     
-    return response
+    return response, markup
+
+# GÜNCELLENMİŞ MESAJ HANDLER
+@bot.message_handler(func=lambda message: True)
+def handle_message(message):
+    user_id = message.from_user.id
+    language = user_languages.get(user_id, 'en')
+    
+    if not get_user_consent(user_id):
+        send_legal_warning(message.chat.id, language)
+        return
+    
+    phone_number_text = message.text
+    
+    if user_states.get(user_id) == 'awaiting_ss7_number':
+        handle_ss7_number(message)
+        return
+    
+    result = enhanced_phone_query(phone_number_text, user_id)
+    
+    if result:
+        response, markup = format_enhanced_response(result, language, is_premium_user(user_id))
+        bot.reply_to(message, response, parse_mode="HTML", reply_markup=markup)
+    else:
+        bot.reply_to(message, messages[language]['invalid_number'])
 
 @bot.callback_query_handler(func=lambda call: call.data == "buy_premium")
 def buy_premium(call):
@@ -1240,4 +1355,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
