@@ -739,7 +739,7 @@ def send_detailed_info(call):
         details_text += f"""
 📊 <b>Veri Güvenilirliği:</b> %{random.randint(85, 98)}
 
-⚠️ <i>Bu bilgiler simülasyon amaçlıdır.</i>
+⚠️ <i>Bu bilgiler gizlidir paylaşmanızı önermeyiz.</i>
 """
         
         bot.send_message(
@@ -1355,3 +1355,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
